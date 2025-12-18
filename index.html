@@ -515,7 +515,9 @@
             loadingIds.push(addLoading());
         }
 
-        const promises = loadingIds.map(async (loadId) => {
+        const results = new Array(count);
+
+        const promises = loadingIds.map(async (loadId, idx) => {
             try {
                 let imageUrl = "";
                 let finalCost = "0.00";
@@ -593,8 +595,8 @@
                     finalCost = activeModel.cost;
                 }
                 
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio };
                 removeLoading(loadId);
-                addAIResult(imageUrl, activeModel.name, aspectRatio);
 
             } catch (e) {
                 console.error(e);
@@ -609,6 +611,17 @@
         });
 
         await Promise.allSettled(promises);
+
+        const validResults = results.filter(r => r && r.url);
+
+        if (validResults.length === 0) return;
+
+        if (validResults.length > 1) {
+            addAIResultGroup(validResults, activeModel.name);
+        } else {
+            const single = validResults[0];
+            addAIResult(single.url, single.modelName, single.ratio);
+        }
     }
 
     // --- EDITOR LOGIC ---
@@ -752,6 +765,60 @@
             </div>
         `;
         container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function addAIResultGroup(results, modelName) {
+        const container = document.getElementById('chat-container');
+        const wrapper = document.createElement('div');
+        wrapper.className = "flex items-start gap-3 justify-start max-w-full fade-in mb-6";
+
+        const icon = document.createElement('div');
+        icon.className = "size-8 flex items-center justify-center bg-primary rounded-full shrink-0 mt-1";
+        icon.innerHTML = `<span class="material-symbols-outlined text-white text-sm">auto_awesome</span>`;
+
+        const card = document.createElement('div');
+        card.className = "bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl flex-1";
+
+        const grid = document.createElement('div');
+        grid.className = "grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-black/30";
+
+        results.forEach((res, index) => {
+            const item = document.createElement('div');
+            item.className = "relative cursor-pointer overflow-hidden bg-black/50 rounded-xl border border-border-dark";
+
+            const img = document.createElement('img');
+            img.src = res.url;
+            img.className = "w-full h-auto max-h-[320px] object-contain";
+            img.onclick = () => openModal(res.url);
+
+            const badge = document.createElement('div');
+            badge.className = "absolute top-2 left-2 bg-primary text-[10px] px-2 py-1 rounded-full font-bold";
+            badge.innerText = `#${index + 1} ${res.ratio}`;
+
+            const dl = document.createElement('a');
+            dl.href = res.url;
+            dl.download = `generated-${index + 1}.png`;
+            dl.className = "absolute top-2 right-2 bg-white/15 hover:bg-primary text-white p-2 rounded-full backdrop-blur border border-white/10 transition-colors";
+            dl.innerHTML = `<span class="material-symbols-outlined text-sm">download</span>`;
+
+            item.appendChild(img);
+            item.appendChild(badge);
+            item.appendChild(dl);
+            grid.appendChild(item);
+        });
+
+        const footer = document.createElement('div');
+        footer.className = "px-4 py-3 bg-[#1a1421] flex items-center justify-between text-sm";
+        footer.innerHTML = `<div class="flex flex-col"><span class="text-white font-bold">${modelName}</span><span class="text-[10px] text-[#ab9db9]">${results.length} images</span></div>`;
+
+        card.appendChild(grid);
+        card.appendChild(footer);
+
+        wrapper.appendChild(icon);
+        wrapper.appendChild(card);
+
+        container.appendChild(wrapper);
         container.scrollTop = container.scrollHeight;
     }
 
