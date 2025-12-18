@@ -57,19 +57,23 @@
         </div>
         <form id="auth-form" class="space-y-4">
             <div>
-                <label for="username-input" class="block text-sm text-[#ab9db9] mb-1">ユーザー名</label>
-                <input id="username-input" name="username" type="text" required placeholder="yourname" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
+                <label for="email-input" class="block text-sm text-[#ab9db9] mb-1">メールアドレス</label>
+                <input id="email-input" name="email" type="email" required placeholder="you@example.com" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
             </div>
             <div>
                 <label for="password-input" class="block text-sm text-[#ab9db9] mb-1">パスワード</label>
                 <input id="password-input" name="password" type="password" required minlength="6" placeholder="••••••••" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
+            </div>
+            <div id="password-confirm-container" class="hidden">
+                <label for="password-confirm-input" class="block text-sm text-[#ab9db9] mb-1">パスワード（確認用）</label>
+                <input id="password-confirm-input" name="password-confirm" type="password" minlength="6" placeholder="••••••••" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
             </div>
             <button id="auth-submit" type="submit" class="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3 rounded-lg shadow-lg shadow-primary/20 transition-all active:scale-95">
                 ログイン
             </button>
         </form>
         <div class="text-xs text-[#ab9db9]">
-            ユーザー名のみで利用できます。入力したユーザー名に <span class="text-primary font-bold">@my-app-dummy.com</span> が自動的に付与されます。
+            Supabase 認証を利用してメールアドレスとパスワードでログイン／新規登録できます。
         </div>
         <div id="auth-error" class="text-sm text-red-400 bg-red-400/10 border border-red-400/30 rounded-lg px-3 py-2 hidden"></div>
     </div>
@@ -333,7 +337,6 @@
     // --- Supabase Auth (Dummy Email) ---
     const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
     const SUPABASE_KEY = 'sb_secret_yjxINXuqsgddCkrd_OVppA_hGb5SikJ';
-    const DUMMY_EMAIL_DOMAIN = '@my-app-dummy.com';
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     let isSignupMode = false;
 
@@ -391,10 +394,12 @@
         const title = document.getElementById('auth-title');
         const submit = document.getElementById('auth-submit');
         const toggle = document.getElementById('auth-toggle');
+        const passwordConfirm = document.getElementById('password-confirm-container');
 
         title.innerText = isSignupMode ? '新規登録' : 'ログイン';
         submit.innerText = isSignupMode ? '新規登録' : 'ログイン';
         toggle.innerText = isSignupMode ? 'ログインに切り替え' : '新規登録に切り替え';
+        passwordConfirm.classList.toggle('hidden', !isSignupMode);
         clearAuthError();
     }
 
@@ -412,18 +417,15 @@
     }
 
     function formatAuthError(message) {
-        if (message.includes('User already registered')) return 'そのユーザー名は既に使われています。';
-        if (message.includes('Invalid login credentials')) return 'ユーザー名またはパスワードが正しくありません。';
+        if (message.includes('User already registered')) return 'そのメールアドレスは既に使われています。';
+        if (message.includes('Invalid login credentials')) return 'メールアドレスまたはパスワードが正しくありません。';
         return `エラーが発生しました: ${message}`;
-    }
-
-    function withDummyEmail(username) {
-        return `${username}${DUMMY_EMAIL_DOMAIN}`;
     }
 
     function extractUsername(email) {
         if (!email) return '';
-        return email.endsWith(DUMMY_EMAIL_DOMAIN) ? email.replace(DUMMY_EMAIL_DOMAIN, '') : email;
+        const [local] = email.split('@');
+        return local || email;
     }
 
     function showAuthScreen() {
@@ -449,11 +451,13 @@
         event.preventDefault();
         clearAuthError();
 
-        const username = document.getElementById('username-input').value.trim();
+        const email = document.getElementById('email-input').value.trim();
         const password = document.getElementById('password-input').value;
-        if (!username || !password) return showAuthError('ユーザー名とパスワードを入力してください。');
+        const passwordConfirm = document.getElementById('password-confirm-input').value;
 
-        const email = withDummyEmail(username);
+        if (!email || !password) return showAuthError('メールアドレスとパスワードを入力してください。');
+        if (isSignupMode && password !== passwordConfirm) return showAuthError('確認用パスワードが一致しません。');
+
         const submitBtn = document.getElementById('auth-submit');
         submitBtn.disabled = true;
         submitBtn.innerText = isSignupMode ? '登録中...' : 'ログイン中...';
@@ -473,6 +477,7 @@
             showAuthError(formatAuthError(error.message));
         } else {
             document.getElementById('password-input').value = '';
+            document.getElementById('password-confirm-input').value = '';
             const { data: { session } } = await supabaseClient.auth.getSession();
             if (session?.user) showAppShell(session.user);
         }
