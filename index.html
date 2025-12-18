@@ -341,7 +341,7 @@
         <div class="space-y-2">
             <label class="block text-xs text-[#ab9db9]">API Key</label>
             <input id="settings-api-key-input" type="password" placeholder="Google API Key..." class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-600" />
-            <p class="text-xs text-[#ab9db9]">保存されたAPIキーはこのデバイスのローカルストレージに暗号化せず保存されます。</p>
+            <p class="text-xs text-[#ab9db9]">保存したAPIキーはSupabaseのapi_keysテーブルに保存され、ログインユーザーごとに管理されます。</p>
         </div>
 
         <div class="flex items-center justify-between gap-3">
@@ -402,6 +402,8 @@
         }
     });
     let isSignupMode = false;
+    let currentUserId = null;
+    let currentApiKeyRecordId = null;
 
     // --- Model Configuration (Restored from working code) ---
     const MODELS = {
@@ -429,7 +431,6 @@
     let activeModelKey = "gemini-3-pro-image-preview";
     let currentGenMode = 'free';
     let selectedTemplateId = null;
-    const API_KEY_STORAGE_KEY = 'nb_api_key';
 
     // --- Settings Helpers ---
     function setApiKeyInputs(value) {
@@ -439,36 +440,36 @@
         if (settingsInput) settingsInput.value = value || '';
     }
 
-    function getSavedApiKey() {
-        try {
-            return localStorage.getItem(API_KEY_STORAGE_KEY);
-        } catch (error) {
-            console.warn('APIキーの読み込みに失敗しました', error);
-            return '';
-        }
-    }
+    async function loadApiKeyFromDB(userId) {
+        if (!userId) return;
+        const { data, error } = await supabaseClient
+            .from('api_keys')
+            .select('id, key')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-    function saveApiKeyToStorage(value) {
-        try {
-            if (value) {
-                localStorage.setItem(API_KEY_STORAGE_KEY, value);
-            } else {
-                localStorage.removeItem(API_KEY_STORAGE_KEY);
-            }
-        } catch (error) {
-            console.warn('APIキーの保存に失敗しました', error);
+        if (error) {
+            console.warn('APIキーの取得に失敗しました', error);
+            setApiKeyInputs('');
+            currentApiKeyRecordId = null;
+            return;
         }
-    }
 
-    function loadApiKeyFromStorage() {
-        const saved = getSavedApiKey();
-        if (saved) setApiKeyInputs(saved);
+        if (data) {
+            currentApiKeyRecordId = data.id;
+            setApiKeyInputs(data.key);
+        } else {
+            currentApiKeyRecordId = null;
+            setApiKeyInputs('');
+        }
     }
 
     function openSettingsPanel() {
         const modal = document.getElementById('settings-modal');
         modal.classList.remove('hidden');
-        setApiKeyInputs(getSavedApiKey() || document.getElementById('api-key-input').value);
+        setApiKeyInputs(document.getElementById('api-key-input').value);
         const status = document.getElementById('settings-save-status');
         status.classList.add('opacity-0');
     }
@@ -477,12 +478,39 @@
         document.getElementById('settings-modal').classList.add('hidden');
     }
 
-    function saveApiKeyFromSettings() {
+    async function saveApiKeyFromSettings() {
+        if (!currentUserId) {
+            alert('ログイン後にAPIキーを保存してください');
+            return;
+        }
         const value = document.getElementById('settings-api-key-input').value.trim();
-        saveApiKeyToStorage(value);
-        setApiKeyInputs(value);
+        const payload = {
+            id: currentApiKeyRecordId || crypto.randomUUID(),
+            user_id: currentUserId,
+            name: 'default',
+            key: value,
+        };
+
+        const { data, error } = await supabaseClient
+            .from('api_keys')
+            .upsert(payload)
+            .select('id')
+            .single();
+
         const status = document.getElementById('settings-save-status');
-        status.textContent = value ? 'APIキーを保存しました。' : 'APIキーを削除しました。';
+        if (error) {
+            console.warn('APIキーの保存に失敗しました', error);
+            status.textContent = 'APIキーの保存に失敗しました。';
+            status.classList.remove('text-green-400');
+            status.classList.add('text-red-400');
+        } else {
+            currentApiKeyRecordId = data.id;
+            setApiKeyInputs(value);
+            status.textContent = 'APIキーを保存しました。';
+            status.classList.remove('text-red-400');
+            status.classList.add('text-green-400');
+        }
+
         status.classList.remove('opacity-0');
         setTimeout(() => status.classList.add('opacity-0'), 2000);
     }
@@ -526,15 +554,25 @@
         return local || email;
     }
 
+    function clearInMemoryData() {
+        templates = [];
+        selectedTemplateId = null;
+        setApiKeyInputs('');
+        renderSidebar();
+    }
+
     function showAuthScreen() {
         document.getElementById('auth-screen').classList.remove('hidden');
         document.getElementById('app-shell').classList.add('hidden');
         document.getElementById('logout-button').classList.add('hidden');
         document.getElementById('logged-in-user').classList.add('hidden');
         document.getElementById('settings-fab').classList.add('hidden');
+        currentUserId = null;
+        currentApiKeyRecordId = null;
+        clearInMemoryData();
     }
 
-    function showAppShell(user) {
+    async function showAppShell(user) {
         document.getElementById('auth-screen').classList.add('hidden');
         document.getElementById('app-shell').classList.remove('hidden');
         const userBadge = document.getElementById('logged-in-user');
@@ -545,6 +583,11 @@
         }
         document.getElementById('logout-button').classList.remove('hidden');
         document.getElementById('settings-fab').classList.remove('hidden');
+        currentUserId = user?.id || null;
+        await Promise.all([
+            loadTemplates(currentUserId),
+            loadApiKeyFromDB(currentUserId),
+        ]);
     }
 
     async function handleAuthSubmit(event) {
@@ -579,7 +622,7 @@
             document.getElementById('password-input').value = '';
             document.getElementById('password-confirm-input').value = '';
             const { data: { session } } = await supabaseClient.auth.getSession();
-            if (session?.user) showAppShell(session.user);
+            if (session?.user) await showAppShell(session.user);
         }
 
         submitBtn.disabled = false;
@@ -594,7 +637,7 @@
     async function refreshSessionUI() {
         const { data: { session } } = await supabaseClient.auth.getSession();
         if (session?.user) {
-            showAppShell(session.user);
+            await showAppShell(session.user);
         } else {
             showAuthScreen();
         }
@@ -611,9 +654,9 @@
             updateAuthModeUI();
         });
         document.getElementById('logout-button').addEventListener('click', handleLogout);
-        supabaseClient.auth.onAuthStateChange((_event, session) => {
+        supabaseClient.auth.onAuthStateChange(async (_event, session) => {
             if (session?.user) {
-                showAppShell(session.user);
+                await showAppShell(session.user);
             } else {
                 showAuthScreen();
             }
@@ -625,9 +668,6 @@
     // --- INITIALIZATION ---
     window.onload = function() {
         initModelSelect();
-        loadTemplates();
-        renderSidebar();
-        loadApiKeyFromStorage();
         setupAuthListeners();
     };
 
@@ -652,27 +692,57 @@
         document.getElementById('model-cost-display').innerText = `$${model.cost}/img`;
     }
 
-    function loadTemplates() {
-        try {
-            const stored = memoryStorage.getItem('nb_templates');
-            if (stored) {
-                templates = JSON.parse(stored);
-            } else {
-                templates = DEFAULT_TEMPLATES;
-                saveTemplatesToStorage();
-            }
-        } catch (error) {
-            console.warn('テンプレートの読み込みに失敗したためデフォルトを使用します', error);
-            templates = DEFAULT_TEMPLATES;
+    function extractFieldsFromPrompt(prompt) {
+        const regex = /\{\{(.+?)\}\}/g;
+        let match;
+        const fields = new Set();
+        while ((match = regex.exec(prompt)) !== null) {
+            fields.add(match[1]);
         }
+        return Array.from(fields);
     }
 
-    function saveTemplatesToStorage() {
-        try {
-            memoryStorage.setItem('nb_templates', JSON.stringify(templates));
-        } catch (error) {
-            console.warn('テンプレートの保存に失敗しました。セッション中のみ利用されます。', error);
+    async function loadTemplates(userId) {
+        if (!userId) {
+            templates = DEFAULT_TEMPLATES;
+            renderSidebar();
+            return;
         }
+
+        const { data, error } = await supabaseClient
+            .from('templates')
+            .select('id, title, content')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: true });
+
+        if (error) {
+            console.warn('テンプレートの取得に失敗しました', error);
+            templates = DEFAULT_TEMPLATES;
+            renderSidebar();
+            return;
+        }
+
+        templates = (data || []).map(row => {
+            let parsedContent = null;
+            try {
+                parsedContent = JSON.parse(row.content);
+            } catch (_) {
+                parsedContent = null;
+            }
+
+            const prompt = parsedContent?.prompt || row.content || '';
+            const aspectRatio = parsedContent?.aspectRatio || '1:1';
+            const fields = parsedContent?.fields || extractFieldsFromPrompt(prompt);
+
+            return {
+                id: row.id,
+                name: row.title,
+                prompt,
+                aspectRatio,
+                fields,
+            };
+        });
+
         renderSidebar();
     }
 
@@ -957,7 +1027,11 @@
         textarea.selectionEnd = cursor + 4;
     }
 
-    function saveTemplate() {
+    async function saveTemplate() {
+        if (!currentUserId) {
+            alert('テンプレートの保存にはログインが必要です');
+            return;
+        }
         const idInput = document.getElementById('editor-id');
         const name = document.getElementById('editor-name').value;
         const prompt = document.getElementById('editor-prompt').value;
@@ -965,41 +1039,70 @@
 
         if (!name || !prompt) return alert("名前とプロンプトは必須です");
 
-        const regex = /\{\{(.+?)\}\}/g;
-        let match;
-        const fields = new Set();
-        while ((match = regex.exec(prompt)) !== null) {
-            fields.add(match[1]);
-        }
+        const fields = new Set(extractFieldsFromPrompt(prompt));
+
+        const templateId = idInput.value || crypto.randomUUID();
 
         const newTemplate = {
-            id: idInput.value || 'tpl_' + Date.now(),
+            id: templateId,
             name: name,
             prompt: prompt,
             aspectRatio: ar,
             fields: Array.from(fields)
         };
 
-        if (idInput.value) {
-            const idx = templates.findIndex(t => t.id === idInput.value);
-            if (idx !== -1) templates[idx] = newTemplate;
+        const payload = {
+            id: templateId,
+            user_id: currentUserId,
+            title: name,
+            content: JSON.stringify({
+                prompt: prompt,
+                aspectRatio: ar,
+                fields: Array.from(fields),
+            })
+        };
+
+        const { error } = await supabaseClient.from('templates').upsert(payload);
+        if (error) {
+            console.warn('テンプレートの保存に失敗しました', error);
+            alert('テンプレートの保存に失敗しました。時間をおいて再度お試しください。');
+            return;
+        }
+
+        const existingIndex = templates.findIndex(t => t.id === templateId);
+        if (existingIndex !== -1) {
+            templates[existingIndex] = newTemplate;
         } else {
             templates.push(newTemplate);
         }
 
-        saveTemplatesToStorage();
+        renderSidebar();
         switchView('dashboard');
         selectTemplateForGen(newTemplate.id);
     }
 
-    function deleteTemplate(id) {
+    async function deleteTemplate(id) {
         if(!confirm("本当に削除しますか？")) return;
+        if (!currentUserId) return alert('ログイン後に削除してください');
+
+        const { error } = await supabaseClient
+            .from('templates')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', currentUserId);
+
+        if (error) {
+            console.warn('テンプレートの削除に失敗しました', error);
+            alert('テンプレートの削除に失敗しました');
+            return;
+        }
+
         templates = templates.filter(t => t.id !== id);
         if (selectedTemplateId === id) {
             selectedTemplateId = null;
             setGenMode('free');
         }
-        saveTemplatesToStorage();
+        renderSidebar();
     }
 
     // --- DOM HELPERS (Chat) ---
