@@ -530,6 +530,10 @@
 
     function setupAuthListeners() {
         document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
+        document.getElementById('auth-submit').addEventListener('click', (event) => {
+            event.preventDefault();
+            handleAuthSubmit(event);
+        });
         document.getElementById('auth-toggle').addEventListener('click', () => {
             isSignupMode = !isSignupMode;
             updateAuthModeUI();
