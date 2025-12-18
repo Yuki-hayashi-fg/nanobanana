@@ -147,6 +147,30 @@
             </div>
         </div>
 
+        <div class="flex-shrink-0 bg-[#141218] border-t border-border-dark px-4 sm:px-8 py-6">
+            <div class="max-w-5xl mx-auto space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary">history</span>
+                        <div>
+                            <p class="text-[10px] uppercase text-[#ab9db9] font-bold tracking-widest">Library</p>
+                            <h3 class="text-white font-display font-bold">画像履歴</h3>
+                        </div>
+                    </div>
+                    <button onclick="refreshImageHistory()" class="flex items-center gap-2 text-sm text-[#ab9db9] hover:text-white px-3 py-2 rounded-lg border border-border-dark bg-surface-dark transition-colors">
+                        <span class="material-symbols-outlined text-sm">refresh</span>
+                        再読み込み
+                    </button>
+                </div>
+
+                <div id="history-empty" class="text-[#ab9db9] text-sm bg-surface-dark/70 border border-border-dark rounded-xl p-4">
+                    生成した画像がここに表示されます。ログインして画像を生成すると自動的に保存されます。
+                </div>
+
+                <div id="history-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
+            </div>
+        </div>
+
         <div class="flex-shrink-0 bg-[#141218] border-t border-border-dark p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-30">
             <div class="max-w-4xl mx-auto flex flex-col gap-5">
                 
@@ -431,6 +455,7 @@
     let activeModelKey = "gemini-3-pro-image-preview";
     let currentGenMode = 'free';
     let selectedTemplateId = null;
+    let imageHistory = [];
 
     // --- Settings Helpers ---
     function setApiKeyInputs(value) {
@@ -464,6 +489,124 @@
             currentApiKeyRecordId = null;
             setApiKeyInputs('');
         }
+    }
+
+    async function loadImageHistory(userId) {
+        if (!userId) {
+            imageHistory = [];
+            renderImageHistory();
+            return;
+        }
+
+        const { data, error } = await supabaseClient
+            .from('image_history')
+            .select('id, prompt, image_url, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(30);
+
+        if (error) {
+            console.warn('画像履歴の取得に失敗しました', error);
+            imageHistory = [];
+        } else {
+            imageHistory = data || [];
+        }
+        renderImageHistory();
+    }
+
+    async function saveImageHistory(prompt, results) {
+        if (!currentUserId || !Array.isArray(results) || results.length === 0) return;
+
+        const rows = results.map((item) => ({
+            id: crypto.randomUUID(),
+            user_id: currentUserId,
+            prompt,
+            image_url: item.url,
+        }));
+
+        const { data, error } = await supabaseClient
+            .from('image_history')
+            .insert(rows)
+            .select('id, prompt, image_url, created_at')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.warn('画像履歴の保存に失敗しました', error);
+            return;
+        }
+
+        const inserted = data || rows.map((r) => ({ ...r, created_at: new Date().toISOString() }));
+        imageHistory = [...inserted, ...imageHistory].slice(0, 30);
+        renderImageHistory();
+    }
+
+    function renderImageHistory() {
+        const grid = document.getElementById('history-grid');
+        const empty = document.getElementById('history-empty');
+
+        grid.innerHTML = '';
+        if (!imageHistory.length) {
+            empty.classList.remove('hidden');
+            grid.classList.add('hidden');
+            return;
+        }
+
+        empty.classList.add('hidden');
+        grid.classList.remove('hidden');
+
+        imageHistory.forEach((item) => {
+            const card = document.createElement('div');
+            card.className = "bg-surface-dark border border-border-dark rounded-xl overflow-hidden shadow-lg transition-all hover:translate-y-[-2px] hover:shadow-primary/20";
+
+            const visual = document.createElement('div');
+            visual.className = "relative bg-black/40";
+
+            const img = document.createElement('img');
+            img.src = item.image_url;
+            img.className = "w-full h-48 object-cover";
+            img.onclick = () => openModal(item.image_url);
+
+            const fallback = document.createElement('div');
+            fallback.className = "absolute inset-0 hidden items-center justify-center bg-black/70 text-red-200 font-bold text-sm";
+            fallback.textContent = "期限切れ";
+
+            img.onerror = () => {
+                img.classList.add('hidden');
+                fallback.classList.remove('hidden');
+                fallback.classList.add('flex');
+            };
+
+            visual.appendChild(img);
+            visual.appendChild(fallback);
+
+            const body = document.createElement('div');
+            body.className = "p-4 space-y-2";
+
+            const promptText = document.createElement('p');
+            promptText.className = "text-sm text-white line-clamp-2";
+            promptText.textContent = item.prompt || '';
+
+            const meta = document.createElement('div');
+            meta.className = "text-[11px] text-[#ab9db9] flex items-center gap-1";
+            const date = new Date(item.created_at || Date.now());
+            meta.textContent = date.toLocaleString('ja-JP');
+
+            body.appendChild(promptText);
+            body.appendChild(meta);
+
+            card.appendChild(visual);
+            card.appendChild(body);
+            grid.appendChild(card);
+        });
+    }
+
+    function refreshImageHistory() {
+        if (!currentUserId) {
+            imageHistory = [];
+            renderImageHistory();
+            return;
+        }
+        loadImageHistory(currentUserId);
     }
 
     function openSettingsPanel() {
@@ -559,6 +702,8 @@
         selectedTemplateId = null;
         setApiKeyInputs('');
         renderSidebar();
+        imageHistory = [];
+        renderImageHistory();
     }
 
     function showAuthScreen() {
@@ -587,6 +732,7 @@
         await Promise.all([
             loadTemplates(currentUserId),
             loadApiKeyFromDB(currentUserId),
+            loadImageHistory(currentUserId),
         ]);
     }
 
@@ -982,6 +1128,8 @@
         const validResults = results.filter(r => r && r.url);
 
         if (validResults.length === 0) return;
+
+        await saveImageHistory(finalPrompt, validResults);
 
         if (validResults.length > 1) {
             addAIResultGroup(validResults, activeModel.name);
