@@ -424,29 +424,7 @@
 
     // --- State ---
     let templates = [];
-    const DEFAULT_TEMPLATES = [
-        {
-            id: 'tpl_default_slide',
-            name: 'スライド作成',
-            aspectRatio: '16:9',
-            prompt: '以下の内容を魅力的で信頼性のある１枚のスライド画像にしてください 背景は白を基調とし、下部10%にはテキストを入れないでください。 枠は不要です \n{{スライド内容}}',
-            fields: ['スライド内容']
-        },
-        {
-            id: 'tpl_default_1',
-            name: 'Cyberpunk City',
-            aspectRatio: '16:9',
-            prompt: 'A futuristic city at {{time}}, cyberpunk style, neon lights, {{weather}}, highly detailed 8k.',
-            fields: ['time', 'weather']
-        },
-        {
-            id: 'tpl_default_2',
-            name: 'Watercolor Art',
-            aspectRatio: '3:4',
-            prompt: 'Watercolor painting of {{subject}}, {{mood}}. Soft pastel colors, artistic brush strokes, paper texture.',
-            fields: ['subject', 'mood']
-        }
-    ];
+    const DEFAULT_TEMPLATES = [];
 
     let activeModelKey = "gemini-3-pro-image-preview";
     let currentGenMode = 'free';
