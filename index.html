@@ -406,11 +406,17 @@
         <span class="material-symbols-outlined text-3xl">close</span>
     </button>
     <div class="flex flex-col gap-4 max-h-screen w-full max-w-5xl">
-        <div class="relative flex-1 rounded-xl overflow-hidden flex items-center justify-center group">
-            <img id="modal-image" src="" class="max-h-[85vh] w-auto object-contain shadow-2xl rounded-lg">
+        <div class="relative flex-1 rounded-xl overflow-hidden flex items-center justify-center group bg-black/40">
+            <img id="modal-image" src="" class="max-h-[75vh] w-auto object-contain shadow-2xl rounded-lg">
             <a id="modal-download" href="#" download="generated.png" class="absolute bottom-6 right-6 bg-white/20 hover:bg-primary text-white p-3 rounded-full backdrop-blur-xl transition-all opacity-0 group-hover:opacity-100 border border-white/10">
                 <span class="material-symbols-outlined">download</span>
             </a>
+        </div>
+        <div id="modal-prompt-container" class="bg-surface-dark border border-border-dark rounded-xl p-4 space-y-2 shadow-lg shadow-black/40 hidden">
+            <div class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">chat</span> 生成プロンプト
+            </div>
+            <p id="modal-prompt" class="text-sm text-white leading-relaxed whitespace-pre-wrap"></p>
         </div>
     </div>
 </div>
@@ -558,11 +564,13 @@
             card.className = "bg-surface-dark border border-border-dark rounded-xl overflow-hidden shadow-lg shadow-black/30 hover:-translate-y-0.5 transition-transform duration-150";
 
             const imgWrap = document.createElement('div');
-            imgWrap.className = "relative bg-black/40";
+            imgWrap.className = "relative bg-black/40 cursor-pointer";
 
             const img = document.createElement('img');
             img.src = entry.image_url;
             img.className = "w-full h-48 object-cover";
+
+            imgWrap.onclick = () => openModal(entry.image_url, entry.prompt);
 
             const expired = document.createElement('div');
             expired.className = "absolute inset-0 flex items-center justify-center text-[#ab9db9] text-sm bg-black/70 hidden";
@@ -1420,9 +1428,22 @@
         container.scrollTop = container.scrollHeight;
     }
 
-    function openModal(src) {
+    function openModal(src, prompt = '') {
+        const promptContainer = document.getElementById('modal-prompt-container');
+        const promptElement = document.getElementById('modal-prompt');
         document.getElementById('modal-image').src = src;
         document.getElementById('modal-download').href = src;
+
+        if (promptContainer && promptElement) {
+            if (prompt) {
+                promptElement.textContent = prompt;
+                promptContainer.classList.remove('hidden');
+            } else {
+                promptElement.textContent = '';
+                promptContainer.classList.add('hidden');
+            }
+        }
+
         document.getElementById('image-modal').classList.remove('hidden');
     }
     function closeModal() {
