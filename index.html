@@ -147,6 +147,20 @@
             </div>
         </div>
 
+        <div id="history-section" class="flex-shrink-0 bg-[#141218] border-t border-border-dark p-6 hidden">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <p class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider">ライブラリ</p>
+                        <h3 class="text-lg font-display font-bold text-white">生成履歴</h3>
+                    </div>
+                    <div class="text-[10px] text-[#ab9db9] bg-white/5 px-2 py-1 rounded-full border border-white/10">最新の生成結果を保存しています</div>
+                </div>
+                <div id="history-empty" class="text-sm text-[#ab9db9] bg-black/30 border border-border-dark rounded-xl p-4 text-center">生成履歴はまだありません。画像を生成するとここに保存されます。</div>
+                <div id="history-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+            </div>
+        </div>
+
         <div class="flex-shrink-0 bg-[#141218] border-t border-border-dark p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-30">
             <div class="max-w-4xl mx-auto flex flex-col gap-5">
                 
@@ -431,6 +445,7 @@
     let activeModelKey = "gemini-3-pro-image-preview";
     let currentGenMode = 'free';
     let selectedTemplateId = null;
+    let imageHistory = [];
 
     // --- Settings Helpers ---
     function setApiKeyInputs(value) {
@@ -463,6 +478,121 @@
         } else {
             currentApiKeyRecordId = null;
             setApiKeyInputs('');
+        }
+    }
+
+    // --- Image History Helpers ---
+    function renderHistory() {
+        const section = document.getElementById('history-section');
+        const grid = document.getElementById('history-grid');
+        const empty = document.getElementById('history-empty');
+        if (!section || !grid || !empty) return;
+
+        if (!currentUserId) {
+            section.classList.add('hidden');
+            imageHistory = [];
+            grid.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+
+        section.classList.remove('hidden');
+        grid.innerHTML = '';
+
+        if (!imageHistory || imageHistory.length === 0) {
+            empty.classList.remove('hidden');
+            return;
+        }
+
+        empty.classList.add('hidden');
+
+        imageHistory.forEach(entry => {
+            const card = document.createElement('div');
+            card.className = "bg-surface-dark border border-border-dark rounded-xl overflow-hidden shadow-lg shadow-black/30 hover:-translate-y-0.5 transition-transform duration-150";
+
+            const imgWrap = document.createElement('div');
+            imgWrap.className = "relative bg-black/40";
+
+            const img = document.createElement('img');
+            img.src = entry.image_url;
+            img.className = "w-full h-48 object-cover";
+
+            const expired = document.createElement('div');
+            expired.className = "absolute inset-0 flex items-center justify-center text-[#ab9db9] text-sm bg-black/70 hidden";
+            expired.innerText = "期限切れ";
+
+            img.onerror = () => {
+                img.classList.add('hidden');
+                expired.classList.remove('hidden');
+            };
+
+            imgWrap.appendChild(img);
+            imgWrap.appendChild(expired);
+
+            const body = document.createElement('div');
+            body.className = "p-4 space-y-2";
+
+            const prompt = document.createElement('p');
+            prompt.className = "text-sm text-white leading-relaxed max-h-[48px] overflow-hidden";
+            prompt.textContent = entry.prompt || "";
+
+            const meta = document.createElement('div');
+            meta.className = "flex items-center justify-between text-[11px] text-[#ab9db9]";
+            const date = new Date(entry.created_at || Date.now());
+            meta.innerHTML = `<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">history</span>${date.toLocaleString('ja-JP')}</span>`;
+
+            body.appendChild(prompt);
+            body.appendChild(meta);
+
+            card.appendChild(imgWrap);
+            card.appendChild(body);
+
+            grid.appendChild(card);
+        });
+    }
+
+    async function loadImageHistory(userId) {
+        if (!userId) return;
+        const { data, error } = await supabaseClient
+            .from('image_history')
+            .select('id, prompt, image_url, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(24);
+
+        if (error) {
+            console.warn('履歴の取得に失敗しました', error);
+            imageHistory = [];
+        } else {
+            imageHistory = data || [];
+        }
+
+        renderHistory();
+    }
+
+    async function saveImageHistory(prompt, imageUrl) {
+        if (!currentUserId || !prompt || !imageUrl) return;
+        const payload = {
+            id: crypto.randomUUID(),
+            user_id: currentUserId,
+            prompt,
+            image_url: imageUrl,
+        };
+
+        const { data, error } = await supabaseClient
+            .from('image_history')
+            .insert(payload)
+            .select('id, prompt, image_url, created_at')
+            .single();
+
+        if (error) {
+            console.warn('履歴の保存に失敗しました', error);
+            return;
+        }
+
+        if (data) {
+            imageHistory.unshift(data);
+            renderHistory();
         }
     }
 
@@ -570,6 +700,7 @@
         currentUserId = null;
         currentApiKeyRecordId = null;
         clearInMemoryData();
+        renderHistory();
     }
 
     async function showAppShell(user) {
@@ -587,6 +718,7 @@
         await Promise.all([
             loadTemplates(currentUserId),
             loadApiKeyFromDB(currentUserId),
+            loadImageHistory(currentUserId),
         ]);
     }
 
@@ -982,6 +1114,8 @@
         const validResults = results.filter(r => r && r.url);
 
         if (validResults.length === 0) return;
+
+        await Promise.allSettled(validResults.map(res => saveImageHistory(finalPrompt, res.url)));
 
         if (validResults.length > 1) {
             addAIResultGroup(validResults, activeModel.name);
