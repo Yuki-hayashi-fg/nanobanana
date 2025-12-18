@@ -334,10 +334,42 @@
 </div>
 
 <script>
+    // --- Storage Helpers ---
+    function createMemoryStorage() {
+        let store = {};
+        return {
+            getItem: (key) => (key in store ? store[key] : null),
+            setItem: (key, value) => { store[key] = value; },
+            removeItem: (key) => { delete store[key]; },
+        };
+    }
+
+    function getSafeStorage() {
+        if (typeof window === 'undefined') return createMemoryStorage();
+        try {
+            const testKey = '__nb_storage_test__';
+            window.localStorage.setItem(testKey, 'ok');
+            window.localStorage.removeItem(testKey);
+            return window.localStorage;
+        } catch (error) {
+            console.warn('localStorage unavailable; using in-memory storage', error);
+            return createMemoryStorage();
+        }
+    }
+
+    const browserStorage = getSafeStorage();
+
     // --- Supabase Auth (Dummy Email) ---
     const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
     const SUPABASE_KEY = 'sb_secret_yjxINXuqsgddCkrd_OVppA_hGb5SikJ';
-    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: {
+            storage: browserStorage,
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: false,
+        }
+    });
     let isSignupMode = false;
 
     // --- Model Configuration (Restored from working code) ---
@@ -548,17 +580,26 @@
     }
 
     function loadTemplates() {
-        const stored = localStorage.getItem('nb_templates');
-        if (stored) {
-            templates = JSON.parse(stored);
-        } else {
+        try {
+            const stored = browserStorage.getItem('nb_templates');
+            if (stored) {
+                templates = JSON.parse(stored);
+            } else {
+                templates = DEFAULT_TEMPLATES;
+                saveTemplatesToStorage();
+            }
+        } catch (error) {
+            console.warn('テンプレートの読み込みに失敗したためデフォルトを使用します', error);
             templates = DEFAULT_TEMPLATES;
-            saveTemplatesToStorage();
         }
     }
 
     function saveTemplatesToStorage() {
-        localStorage.setItem('nb_templates', JSON.stringify(templates));
+        try {
+            browserStorage.setItem('nb_templates', JSON.stringify(templates));
+        } catch (error) {
+            console.warn('テンプレートの保存に失敗しました。セッション中のみ利用されます。', error);
+        }
         renderSidebar();
     }
 
