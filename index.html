@@ -108,10 +108,6 @@
                 </div>
             </div>
 
-            <div>
-                <label class="block text-xs text-[#ab9db9] mb-1">API Key</label>
-                <input type="password" id="api-key-input" placeholder="Google API Key..." class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-600">
-            </div>
         </div>
 
         <div class="space-y-2 bg-surface-dark p-4 rounded-xl border border-border-dark">
@@ -485,8 +481,6 @@
 
     // --- Settings Helpers ---
     function setApiKeyInputs(value) {
-        const sidebarInput = document.getElementById('api-key-input');
-        if (sidebarInput) sidebarInput.value = value || '';
         const settingsInput = document.getElementById('settings-api-key-input');
         if (settingsInput) settingsInput.value = value || '';
     }
@@ -635,7 +629,8 @@
     function openSettingsPanel() {
         const modal = document.getElementById('settings-modal');
         modal.classList.remove('hidden');
-        setApiKeyInputs(document.getElementById('api-key-input').value);
+        const currentValue = document.getElementById('settings-api-key-input')?.value || '';
+        setApiKeyInputs(currentValue);
         const status = document.getElementById('settings-save-status');
         status.classList.add('opacity-0');
     }
@@ -1028,7 +1023,7 @@
 
     async function handleGenerate() {
         // 1. Prepare Params
-        const apiKey = document.getElementById('api-key-input').value;
+        const apiKey = document.getElementById('settings-api-key-input').value;
         const aspectRatio = document.getElementById('gen-aspect-ratio').value;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
         const activeModel = MODELS[activeModelKey];
