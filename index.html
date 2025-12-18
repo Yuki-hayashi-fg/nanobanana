@@ -335,38 +335,34 @@
 
 <script>
     // --- Storage Helpers ---
-    function createMemoryStorage() {
-        let store = {};
-        return {
-            getItem: (key) => (key in store ? store[key] : null),
-            setItem: (key, value) => { store[key] = value; },
-            removeItem: (key) => { delete store[key]; },
-        };
-    }
+    class MemoryStorage {
+        constructor() {
+            this.store = {};
+        }
 
-    function getSafeStorage() {
-        if (typeof window === 'undefined') return createMemoryStorage();
-        try {
-            const testKey = '__nb_storage_test__';
-            window.localStorage.setItem(testKey, 'ok');
-            window.localStorage.removeItem(testKey);
-            return window.localStorage;
-        } catch (error) {
-            console.warn('localStorage unavailable; using in-memory storage', error);
-            return createMemoryStorage();
+        getItem(key) {
+            return Object.prototype.hasOwnProperty.call(this.store, key) ? this.store[key] : null;
+        }
+
+        setItem(key, value) {
+            this.store[key] = value;
+        }
+
+        removeItem(key) {
+            delete this.store[key];
         }
     }
 
-    const browserStorage = getSafeStorage();
+    const memoryStorage = new MemoryStorage();
 
     // --- Supabase Auth (Dummy Email) ---
     const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
     const SUPABASE_KEY = 'sb_secret_yjxINXuqsgddCkrd_OVppA_hGb5SikJ';
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
         auth: {
-            storage: browserStorage,
-            autoRefreshToken: true,
-            persistSession: true,
+            storage: memoryStorage,
+            persistSession: false,
+            autoRefreshToken: false,
             detectSessionInUrl: false,
         }
     });
@@ -581,7 +577,7 @@
 
     function loadTemplates() {
         try {
-            const stored = browserStorage.getItem('nb_templates');
+            const stored = memoryStorage.getItem('nb_templates');
             if (stored) {
                 templates = JSON.parse(stored);
             } else {
@@ -596,7 +592,7 @@
 
     function saveTemplatesToStorage() {
         try {
-            browserStorage.setItem('nb_templates', JSON.stringify(templates));
+            memoryStorage.setItem('nb_templates', JSON.stringify(templates));
         } catch (error) {
             console.warn('テンプレートの保存に失敗しました。セッション中のみ利用されます。', error);
         }
