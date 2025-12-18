@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         tailwind.config = {
             darkMode: "class",
@@ -42,6 +43,39 @@
     </style>
 </head>
 <body class="bg-background-dark text-white font-body h-screen flex overflow-hidden selection:bg-primary selection:text-white">
+
+<div id="auth-screen" class="flex flex-1 items-center justify-center w-full px-4">
+    <div class="w-full max-w-md bg-surface-dark border border-border-dark rounded-2xl p-8 shadow-2xl space-y-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-xs text-[#ab9db9] uppercase font-bold tracking-widest">Nano Banana</p>
+                <h2 id="auth-title" class="text-2xl font-display font-bold text-white mt-1">ログイン</h2>
+            </div>
+            <button id="auth-toggle" type="button" class="text-sm text-primary hover:text-white transition-colors font-bold">
+                新規登録に切り替え
+            </button>
+        </div>
+        <form id="auth-form" class="space-y-4">
+            <div>
+                <label for="username-input" class="block text-sm text-[#ab9db9] mb-1">ユーザー名</label>
+                <input id="username-input" name="username" type="text" required placeholder="yourname" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
+            </div>
+            <div>
+                <label for="password-input" class="block text-sm text-[#ab9db9] mb-1">パスワード</label>
+                <input id="password-input" name="password" type="password" required minlength="6" placeholder="••••••••" class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-3 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
+            </div>
+            <button id="auth-submit" type="submit" class="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3 rounded-lg shadow-lg shadow-primary/20 transition-all active:scale-95">
+                ログイン
+            </button>
+        </form>
+        <div class="text-xs text-[#ab9db9]">
+            ユーザー名のみで利用できます。入力したユーザー名に <span class="text-primary font-bold">@my-app-dummy.com</span> が自動的に付与されます。
+        </div>
+        <div id="auth-error" class="text-sm text-red-400 bg-red-400/10 border border-red-400/30 rounded-lg px-3 py-2 hidden"></div>
+    </div>
+</div>
+
+<div id="app-shell" class="flex flex-1 w-full hidden">
 
 <aside class="w-72 border-r border-border-dark flex flex-col bg-[#141218] z-20 flex-shrink-0 hidden md:flex">
     <div class="p-5 border-b border-border-dark flex justify-between items-center">
@@ -90,7 +124,14 @@
 </aside>
 
 <main class="flex-1 relative h-full overflow-hidden">
-    
+
+    <div class="absolute top-4 right-4 z-50 flex items-center gap-2">
+        <span id="logged-in-user" class="hidden text-sm text-[#ab9db9] bg-black/30 px-3 py-1.5 rounded-full border border-border-dark"></span>
+        <button id="logout-button" class="px-3 py-2 rounded-lg border border-border-dark bg-surface-dark text-sm text-white hover:bg-white/5 transition-colors hidden">
+            ログアウト
+        </button>
+    </div>
+
     <div id="view-dashboard" class="flex flex-col h-full absolute inset-0 transition-transform duration-300">
         <div id="chat-container" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth pb-10">
             <div class="flex flex-col items-center justify-center py-20 opacity-40 select-none">
@@ -272,6 +313,8 @@
 
 </main>
 
+</div>
+
 <div id="image-modal" class="fixed inset-0 z-50 bg-black/95 hidden backdrop-blur-md flex items-center justify-center p-4">
     <button onclick="closeModal()" class="absolute top-4 right-4 text-white hover:text-primary transition-colors z-50 p-2">
         <span class="material-symbols-outlined text-3xl">close</span>
@@ -287,6 +330,13 @@
 </div>
 
 <script>
+    // --- Supabase Auth (Dummy Email) ---
+    const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
+    const SUPABASE_KEY = 'sb_secret_yjxINXuqsgddCkrd_OVppA_hGb5SikJ';
+    const DUMMY_EMAIL_DOMAIN = '@my-app-dummy.com';
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    let isSignupMode = false;
+
     // --- Model Configuration (Restored from working code) ---
     const MODELS = {
         "gemini-3-pro-image-preview": {
@@ -336,11 +386,139 @@
     let currentGenMode = 'free';
     let selectedTemplateId = null;
 
+    // --- Auth Helpers ---
+    function updateAuthModeUI() {
+        const title = document.getElementById('auth-title');
+        const submit = document.getElementById('auth-submit');
+        const toggle = document.getElementById('auth-toggle');
+
+        title.innerText = isSignupMode ? '新規登録' : 'ログイン';
+        submit.innerText = isSignupMode ? '新規登録' : 'ログイン';
+        toggle.innerText = isSignupMode ? 'ログインに切り替え' : '新規登録に切り替え';
+        clearAuthError();
+    }
+
+    function clearAuthError() {
+        const errorBox = document.getElementById('auth-error');
+        errorBox.classList.add('hidden');
+        errorBox.textContent = '';
+    }
+
+    function showAuthError(message) {
+        const errorBox = document.getElementById('auth-error');
+        errorBox.textContent = message;
+        errorBox.classList.remove('hidden');
+        alert(message);
+    }
+
+    function formatAuthError(message) {
+        if (message.includes('User already registered')) return 'そのユーザー名は既に使われています。';
+        if (message.includes('Invalid login credentials')) return 'ユーザー名またはパスワードが正しくありません。';
+        return `エラーが発生しました: ${message}`;
+    }
+
+    function withDummyEmail(username) {
+        return `${username}${DUMMY_EMAIL_DOMAIN}`;
+    }
+
+    function extractUsername(email) {
+        if (!email) return '';
+        return email.endsWith(DUMMY_EMAIL_DOMAIN) ? email.replace(DUMMY_EMAIL_DOMAIN, '') : email;
+    }
+
+    function showAuthScreen() {
+        document.getElementById('auth-screen').classList.remove('hidden');
+        document.getElementById('app-shell').classList.add('hidden');
+        document.getElementById('logout-button').classList.add('hidden');
+        document.getElementById('logged-in-user').classList.add('hidden');
+    }
+
+    function showAppShell(user) {
+        document.getElementById('auth-screen').classList.add('hidden');
+        document.getElementById('app-shell').classList.remove('hidden');
+        const userBadge = document.getElementById('logged-in-user');
+        const username = extractUsername(user?.email);
+        if (username) {
+            userBadge.textContent = `ログイン中：${username}`;
+            userBadge.classList.remove('hidden');
+        }
+        document.getElementById('logout-button').classList.remove('hidden');
+    }
+
+    async function handleAuthSubmit(event) {
+        event.preventDefault();
+        clearAuthError();
+
+        const username = document.getElementById('username-input').value.trim();
+        const password = document.getElementById('password-input').value;
+        if (!username || !password) return showAuthError('ユーザー名とパスワードを入力してください。');
+
+        const email = withDummyEmail(username);
+        const submitBtn = document.getElementById('auth-submit');
+        submitBtn.disabled = true;
+        submitBtn.innerText = isSignupMode ? '登録中...' : 'ログイン中...';
+
+        let error;
+        if (isSignupMode) {
+            ({ error } = await supabaseClient.auth.signUp({ email, password }));
+            if (!error) {
+                const { error: signInError } = await supabaseClient.auth.signInWithPassword({ email, password });
+                if (signInError) error = signInError;
+            }
+        } else {
+            ({ error } = await supabaseClient.auth.signInWithPassword({ email, password }));
+        }
+
+        if (error) {
+            showAuthError(formatAuthError(error.message));
+        } else {
+            document.getElementById('password-input').value = '';
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session?.user) showAppShell(session.user);
+        }
+
+        submitBtn.disabled = false;
+        submitBtn.innerText = isSignupMode ? '新規登録' : 'ログイン';
+    }
+
+    async function handleLogout() {
+        await supabaseClient.auth.signOut();
+        showAuthScreen();
+    }
+
+    async function refreshSessionUI() {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session?.user) {
+            showAppShell(session.user);
+        } else {
+            showAuthScreen();
+        }
+    }
+
+    function setupAuthListeners() {
+        document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
+        document.getElementById('auth-toggle').addEventListener('click', () => {
+            isSignupMode = !isSignupMode;
+            updateAuthModeUI();
+        });
+        document.getElementById('logout-button').addEventListener('click', handleLogout);
+        supabaseClient.auth.onAuthStateChange((_event, session) => {
+            if (session?.user) {
+                showAppShell(session.user);
+            } else {
+                showAuthScreen();
+            }
+        });
+        updateAuthModeUI();
+        refreshSessionUI();
+    }
+
     // --- INITIALIZATION ---
     window.onload = function() {
         initModelSelect();
         loadTemplates();
         renderSidebar();
+        setupAuthListeners();
     };
 
     function initModelSelect() {
