@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: "class",
@@ -447,6 +448,7 @@
             detectSessionInUrl: false,
         }
     });
+    const SECRET_PHRASE = 'my-secret-phrase';
     let isSignupMode = false;
     let currentUserId = null;
     let currentApiKeyRecordId = null;
@@ -480,6 +482,20 @@
     let imageHistory = [];
 
     // --- Settings Helpers ---
+    function encryptApiKey(value) {
+        return CryptoJS.AES.encrypt(value, SECRET_PHRASE).toString();
+    }
+
+    function decryptApiKey(encrypted) {
+        try {
+            const bytes = CryptoJS.AES.decrypt(encrypted, SECRET_PHRASE);
+            return bytes.toString(CryptoJS.enc.Utf8) || '';
+        } catch (error) {
+            console.warn('APIキーの復号に失敗しました', error);
+            return '';
+        }
+    }
+
     function setApiKeyInputs(value) {
         const settingsInput = document.getElementById('settings-api-key-input');
         if (settingsInput) settingsInput.value = value || '';
@@ -504,7 +520,8 @@
 
         if (data) {
             currentApiKeyRecordId = data.id;
-            setApiKeyInputs(data.key);
+            const decryptedKey = data.key ? decryptApiKey(data.key) : '';
+            setApiKeyInputs(decryptedKey);
         } else {
             currentApiKeyRecordId = null;
             setApiKeyInputs('');
@@ -645,11 +662,12 @@
             return;
         }
         const value = document.getElementById('settings-api-key-input').value.trim();
+        const encryptedKey = value ? encryptApiKey(value) : '';
         const payload = {
             id: currentApiKeyRecordId || crypto.randomUUID(),
             user_id: currentUserId,
             name: 'default',
-            key: value,
+            key: encryptedKey,
         };
 
         const { data, error } = await supabaseClient
