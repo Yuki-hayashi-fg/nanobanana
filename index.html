@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html class="dark" lang="ja">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Nano Banana Pro Studio</title>
+    <link href="https://fonts.googleapis.com" rel="preconnect"/>
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#7f13ec",
+                        "primary-dark": "#620eb5",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#0f0e13",
+                        "surface-dark": "#1e1b24",
+                        "input-dark": "#2d2836",
+                        "border-dark": "#3c334a",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "Noto Sans JP", "sans-serif"],
+                        "body": ["Noto Sans JP", "sans-serif"],
+                        "mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "monospace"],
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f0e13; }
+        ::-webkit-scrollbar-thumb { background: #3c334a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #7f13ec; }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-background-dark text-white font-body h-screen flex overflow-hidden selection:bg-primary selection:text-white">
+
+<aside class="w-72 border-r border-border-dark flex flex-col bg-[#141218] z-20 flex-shrink-0 hidden md:flex">
+    <div class="p-5 border-b border-border-dark flex justify-between items-center">
+        <h1 class="text-xl font-display font-bold flex items-center gap-2 cursor-pointer" onclick="switchView('dashboard')">
+            <span class="material-symbols-outlined text-primary">auto_awesome</span>
+            Nano Banana
+        </h1>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4 space-y-6">
+        <div class="space-y-4 bg-surface-dark p-4 rounded-xl border border-border-dark">
+            <h3 class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">tune</span> 設定
+            </h3>
+            
+            <div>
+                <label class="block text-xs text-[#ab9db9] mb-1">Model</label>
+                <div class="relative">
+                    <select id="model-select" onchange="changeModel()" class="w-full bg-input-dark border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none appearance-none cursor-pointer hover:border-primary/50">
+                        </select>
+                    <span class="material-symbols-outlined absolute right-2 top-2.5 text-[#ab9db9] pointer-events-none text-sm">expand_more</span>
+                </div>
+                <div class="mt-2 p-2 bg-black/20 rounded border border-white/5 flex justify-between items-center">
+                    <span class="text-[10px] text-[#ab9db9] truncate max-w-[120px]" id="model-id-display">gemini-3-pro</span>
+                    <span class="text-[10px] font-mono text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded" id="model-cost-display">$0.134</span>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs text-[#ab9db9] mb-1">API Key</label>
+                <input type="password" id="api-key-input" placeholder="Google API Key..." class="w-full bg-input-dark border border-border-dark rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-600">
+            </div>
+        </div>
+
+        <div class="space-y-3">
+            <div class="flex items-center justify-between px-1">
+                <h3 class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider">テンプレート</h3>
+                <button onclick="openEditor()" class="text-[#ab9db9] hover:text-white transition-colors" title="新規作成">
+                    <span class="material-symbols-outlined text-sm">add</span>
+                </button>
+            </div>
+            <div id="template-list" class="flex flex-col gap-2">
+                </div>
+        </div>
+    </div>
+</aside>
+
+<main class="flex-1 relative h-full overflow-hidden">
+    
+    <div id="view-dashboard" class="flex flex-col h-full absolute inset-0 transition-transform duration-300">
+        <div id="chat-container" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth pb-10">
+            <div class="flex flex-col items-center justify-center py-20 opacity-40 select-none">
+                <div class="size-20 bg-primary/20 rounded-full flex items-center justify-center mb-6 animate-pulse">
+                    <span class="material-symbols-outlined text-4xl text-primary">auto_awesome</span>
+                </div>
+                <h2 class="text-2xl font-display font-bold text-white mb-2">Ready to Create</h2>
+                <p class="text-[#ab9db9] text-sm font-mono bg-white/5 px-3 py-1 rounded-full">Select a model to start</p>
+            </div>
+        </div>
+
+        <div class="flex-shrink-0 bg-[#141218] border-t border-border-dark p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-30">
+            <div class="max-w-4xl mx-auto flex flex-col gap-5">
+                
+                <div class="flex justify-center -mt-10 mb-0 pointer-events-none">
+                    <div class="inline-flex bg-[#141218] p-1 rounded-xl shadow-lg border border-border-dark pointer-events-auto">
+                        <button id="mode-free" onclick="setGenMode('free')" class="px-4 py-2 rounded-lg bg-primary text-white shadow-sm text-sm font-bold transition-all flex items-center gap-2">
+                            <span class="material-symbols-outlined text-[18px]">edit_note</span> Free
+                        </button>
+                        <button id="mode-template" onclick="setGenMode('template')" class="px-4 py-2 rounded-lg text-[#ab9db9] hover:text-white hover:bg-white/5 text-sm font-medium transition-all flex items-center gap-2">
+                            <span class="material-symbols-outlined text-[18px]">grid_view</span> Template
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex flex-col md:flex-row gap-4 items-start">
+                    <div class="flex-1 w-full">
+                        <div id="input-free" class="relative group">
+                            <textarea id="prompt-input" class="w-full bg-surface-dark border border-border-dark rounded-xl p-4 text-white placeholder-[#5a4f69] focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none h-32 transition-all font-body leading-relaxed" placeholder="どのような画像を生成しますか？..."></textarea>
+                        </div>
+
+                        <div id="input-template" class="hidden flex flex-col gap-2 h-32">
+                            <div id="template-form-container" class="grid grid-cols-2 gap-3 bg-surface-dark border border-border-dark rounded-xl p-4 h-full overflow-y-auto">
+                                <div class="col-span-2 text-center text-[#ab9db9] text-sm flex flex-col items-center justify-center h-full">
+                                    サイドバーからテンプレートを選択してください
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-row md:flex-col gap-3 w-full md:w-56">
+                        
+                        <div class="bg-surface-dark rounded-xl border border-border-dark p-3 flex flex-col gap-3">
+                            
+                            <div>
+                                <label class="text-[10px] font-bold text-[#ab9db9] uppercase mb-1 block">比率</label>
+                                <div class="relative z-10">
+                                    <select id="gen-aspect-ratio" class="w-full bg-[#150d1c] border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none appearance-none cursor-pointer transition-colors hover:border-primary/50">
+                                        <option value="1:1">1:1</option>
+                                        <option value="9:16">9:16</option>
+                                        <option value="16:9">16:9</option>
+                                        <option value="3:4">3:4</option>
+                                        <option value="4:3">4:3</option>
+                                        <option value="3:2">3:2</option>
+                                        <option value="2:3">2:3</option>
+                                        <option value="5:4">5:4</option>
+                                        <option value="4:5">4:5</option>
+                                        <option value="21:9">21:9</option>
+                                    </select>
+                                    <span class="material-symbols-outlined absolute right-2 top-2 text-[#ab9db9] pointer-events-none text-sm z-0">unfold_more</span>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="text-[10px] font-bold text-[#ab9db9] uppercase">生成枚数</label>
+                                    <span id="gen-count-display" class="text-xs font-mono bg-white/10 px-1.5 rounded text-white">1</span>
+                                </div>
+                                <input type="range" id="gen-count" min="1" max="4" value="1" class="w-full h-1.5 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary" oninput="document.getElementById('gen-count-display').innerText = this.value">
+                            </div>
+
+                        </div>
+
+                        <button onclick="handleGenerate()" id="generate-btn" class="flex-1 py-3 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap min-h-[50px]">
+                            <span class="material-symbols-outlined text-2xl">auto_awesome</span>
+                            <span class="md:hidden lg:inline">Generate</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-editor" class="absolute inset-0 bg-background-dark flex flex-col z-40 transform translate-x-full transition-transform duration-300 overflow-y-auto">
+        <header class="flex items-center justify-between border-b border-border-dark px-6 py-4 bg-background-dark/80 backdrop-blur-md sticky top-0 z-50">
+            <div class="flex items-center gap-4">
+                <button onclick="switchView('dashboard')" class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-dark transition-colors group">
+                    <span class="material-symbols-outlined text-gray-400 group-hover:text-primary">arrow_back</span>
+                </button>
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-primary/10 rounded-lg hidden sm:block">
+                        <span class="material-symbols-outlined text-primary">edit_document</span>
+                    </div>
+                    <h1 class="text-xl font-bold tracking-tight text-white" id="editor-title">テンプレート作成</h1>
+                </div>
+            </div>
+            <button onclick="switchView('dashboard')" class="px-5 py-2.5 text-sm font-medium text-gray-300 hover:bg-surface-dark rounded-lg transition-colors border border-transparent">
+                キャンセル
+            </button>
+        </header>
+
+        <div class="flex-1 p-4 md:p-8 flex justify-center w-full">
+            <div class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
+                <div class="lg:col-span-8 flex flex-col gap-4">
+                    <div class="flex flex-col flex-1 bg-surface-dark rounded-2xl border border-border-dark p-1 shadow-sm overflow-hidden min-h-[500px]">
+                        <div class="flex items-center justify-between px-5 py-3 border-b border-border-dark bg-[#150d1c]/50">
+                            <label class="text-sm font-bold uppercase tracking-wider text-gray-400 flex items-center gap-2">
+                                <span class="material-symbols-outlined text-lg">terminal</span> Prompt Editor
+                            </label>
+                            <div class="flex items-center gap-3">
+                                <button onclick="insertVariable()" class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-dark hover:bg-[#2a2430] border border-gray-700 rounded-md text-xs font-semibold text-gray-200 transition-all shadow-sm active:scale-95 group">
+                                    <span class="material-symbols-outlined text-[16px] text-primary">data_object</span>
+                                    変数挿入 {{ }}
+                                </button>
+                                <div class="h-4 w-px bg-gray-700"></div>
+                                <span class="text-xs font-medium text-gray-500 flex items-center gap-1">
+                                    <span class="material-symbols-outlined text-[14px]">code</span> Markdown OK
+                                </span>
+                            </div>
+                        </div>
+                        <div class="relative flex-1 group bg-[#150d1c]">
+                            <textarea id="editor-prompt" class="w-full h-full border-0 bg-transparent p-6 text-base md:text-lg leading-relaxed focus:ring-0 resize-none font-mono text-gray-100 placeholder-gray-600" placeholder="ここに画像生成のプロンプトを入力してください...&#10;例: A futuristic city at {{time}}, cyberpunk style, neon lights, {{weather}}, highly detailed 8k." spellcheck="false"></textarea>
+                        </div>
+                        <div class="bg-[#1a1421] px-5 py-3 border-t border-border-dark">
+                            <div class="flex items-start gap-3">
+                                <span class="material-symbols-outlined text-primary text-sm mt-0.5">info</span>
+                                <p class="text-sm text-gray-400">
+                                    <span class="font-bold font-mono text-primary bg-primary/10 px-1 rounded">{{キーワード}}</span> を使用して、ユーザーが入力できる変数を定義します。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-4 flex flex-col gap-6">
+                    <div class="bg-surface-dark rounded-2xl border border-border-dark p-6 shadow-sm">
+                        <label class="flex items-center gap-2 text-sm font-bold text-gray-200 mb-3">
+                            <span class="material-symbols-outlined text-lg">label</span> テンプレート名
+                        </label>
+                        <div class="relative">
+                            <input id="editor-name" class="w-full bg-[#150d1c] border border-border-dark rounded-xl px-4 py-3.5 pl-11 focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-white placeholder-gray-600 font-medium" placeholder="名前を入力..." type="text"/>
+                            <span class="material-symbols-outlined absolute left-3.5 top-3.5 text-gray-500">edit</span>
+                        </div>
+                        <input type="hidden" id="editor-id" value="">
+                    </div>
+
+                    <div class="bg-surface-dark rounded-2xl border border-border-dark p-6 shadow-sm">
+                        <label class="flex items-center gap-2 text-sm font-bold text-gray-200 mb-3">
+                            <span class="material-symbols-outlined text-lg">aspect_ratio</span> デフォルト比率
+                        </label>
+                        <div class="relative">
+                            <select id="editor-aspect-ratio" class="w-full bg-[#150d1c] border border-border-dark rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-white font-medium appearance-none cursor-pointer">
+                                <option value="1:1">1:1</option>
+                                <option value="9:16">9:16</option>
+                                <option value="16:9">16:9</option>
+                                <option value="3:4">3:4</option>
+                                <option value="4:3">4:3</option>
+                                <option value="3:2">3:2</option>
+                                <option value="2:3">2:3</option>
+                                <option value="5:4">5:4</option>
+                                <option value="4:5">4:5</option>
+                                <option value="21:9">21:9</option>
+                            </select>
+                            <span class="material-symbols-outlined absolute right-4 top-4 text-gray-500 pointer-events-none">expand_more</span>
+                        </div>
+                    </div>
+
+                    <div class="flex-1"></div>
+                    <div class="sticky bottom-4 z-10">
+                        <button onclick="saveTemplate()" class="w-full bg-primary hover:bg-[#6b0fca] text-white font-bold py-4 px-6 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-3 transition-all transform active:scale-[0.98] group">
+                            <span class="material-symbols-outlined group-hover:animate-bounce">save</span>
+                            <span class="tracking-wide">テンプレートを保存</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<div id="image-modal" class="fixed inset-0 z-50 bg-black/95 hidden backdrop-blur-md flex items-center justify-center p-4">
+    <button onclick="closeModal()" class="absolute top-4 right-4 text-white hover:text-primary transition-colors z-50 p-2">
+        <span class="material-symbols-outlined text-3xl">close</span>
+    </button>
+    <div class="flex flex-col gap-4 max-h-screen w-full max-w-5xl">
+        <div class="relative flex-1 rounded-xl overflow-hidden flex items-center justify-center group">
+            <img id="modal-image" src="" class="max-h-[85vh] w-auto object-contain shadow-2xl rounded-lg">
+            <a id="modal-download" href="#" download="generated.png" class="absolute bottom-6 right-6 bg-white/20 hover:bg-primary text-white p-3 rounded-full backdrop-blur-xl transition-all opacity-0 group-hover:opacity-100 border border-white/10">
+                <span class="material-symbols-outlined">download</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Model Configuration (Restored from working code) ---
+    const MODELS = {
+        "gemini-3-pro-image-preview": {
+            name: "Nano Banana Pro",
+            id: "gemini-3-pro-image-preview",
+            type: "gemini", // generateContent
+            cost: 0.134,
+            desc: "New"
+        },
+        "imagen-3.0-generate-001": {
+            name: "Imagen 3",
+            id: "imagen-3.0-generate-001",
+            type: "imagen", // predict
+            endpointBase: "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict",
+            cost: 0.036,
+            desc: "Legacy"
+        }
+    };
+
+    // --- State ---
+    let templates = [];
+    const DEFAULT_TEMPLATES = [
+        {
+            id: 'tpl_default_slide',
+            name: 'スライド作成',
+            aspectRatio: '16:9',
+            prompt: '以下の内容を魅力的で信頼性のある１枚のスライド画像にしてください 背景は白を基調とし、下部10%にはテキストを入れないでください。 枠は不要です \n{{スライド内容}}',
+            fields: ['スライド内容']
+        },
+        {
+            id: 'tpl_default_1',
+            name: 'Cyberpunk City',
+            aspectRatio: '16:9',
+            prompt: 'A futuristic city at {{time}}, cyberpunk style, neon lights, {{weather}}, highly detailed 8k.',
+            fields: ['time', 'weather']
+        },
+        {
+            id: 'tpl_default_2',
+            name: 'Watercolor Art',
+            aspectRatio: '3:4',
+            prompt: 'Watercolor painting of {{subject}}, {{mood}}. Soft pastel colors, artistic brush strokes, paper texture.',
+            fields: ['subject', 'mood']
+        }
+    ];
+
+    let activeModelKey = "gemini-3-pro-image-preview";
+    let currentGenMode = 'free';
+    let selectedTemplateId = null;
+
+    // --- INITIALIZATION ---
+    window.onload = function() {
+        initModelSelect();
+        loadTemplates();
+        renderSidebar();
+    };
+
+    function initModelSelect() {
+        const select = document.getElementById('model-select');
+        select.innerHTML = '';
+        Object.keys(MODELS).forEach(key => {
+            const m = MODELS[key];
+            const option = document.createElement('option');
+            option.value = key;
+            option.text = m.name;
+            select.appendChild(option);
+        });
+        changeModel();
+    }
+
+    function changeModel() {
+        const select = document.getElementById('model-select');
+        activeModelKey = select.value;
+        const model = MODELS[activeModelKey];
+        document.getElementById('model-id-display').innerText = model.id;
+        document.getElementById('model-cost-display').innerText = `$${model.cost}/img`;
+    }
+
+    function loadTemplates() {
+        const stored = localStorage.getItem('nb_templates');
+        if (stored) {
+            templates = JSON.parse(stored);
+        } else {
+            templates = DEFAULT_TEMPLATES;
+            saveTemplatesToStorage();
+        }
+    }
+
+    function saveTemplatesToStorage() {
+        localStorage.setItem('nb_templates', JSON.stringify(templates));
+        renderSidebar();
+    }
+
+    // --- NAVIGATION ---
+    function switchView(viewName) {
+        const dashboard = document.getElementById('view-dashboard');
+        const editor = document.getElementById('view-editor');
+        if (viewName === 'editor') {
+            editor.classList.remove('translate-x-full');
+        } else {
+            editor.classList.add('translate-x-full');
+        }
+    }
+
+    // --- SIDEBAR LOGIC ---
+    function renderSidebar() {
+        const list = document.getElementById('template-list');
+        list.innerHTML = '';
+
+        templates.forEach(t => {
+            const div = document.createElement('div');
+            // ランダムグラデーション
+            const hash = t.id.split('').reduce((a,b)=>{a=((a<<5)-a)+b.charCodeAt(0);return a&a},0);
+            const hue = Math.abs(hash) % 360;
+            const gradient = `background: linear-gradient(135deg, hsl(${hue}, 70%, 60%), hsl(${hue+40}, 70%, 50%))`;
+
+            div.className = "flex items-center justify-between p-2 rounded-lg hover:bg-white/5 group transition-all border border-transparent hover:border-border-dark cursor-pointer";
+            div.onclick = (e) => {
+                if(!e.target.closest('button')) selectTemplateForGen(t.id);
+            };
+
+            div.innerHTML = `
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="size-8 rounded flex-shrink-0" style="${gradient}"></div>
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-gray-200 group-hover:text-primary transition-colors truncate">${t.name}</p>
+                        <p class="text-[10px] text-[#ab9db9] truncate">${t.fields.length} variables • ${t.aspectRatio}</p>
+                    </div>
+                </div>
+                <div class="flex opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onclick="openEditor('${t.id}')" class="p-1 hover:text-white text-gray-500" title="編集">
+                        <span class="material-symbols-outlined text-sm">edit</span>
+                    </button>
+                    <button onclick="deleteTemplate('${t.id}')" class="p-1 hover:text-red-400 text-gray-500" title="削除">
+                        <span class="material-symbols-outlined text-sm">delete</span>
+                    </button>
+                </div>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    // --- GENERATOR LOGIC ---
+    function setGenMode(mode) {
+        currentGenMode = mode;
+        const freeBtn = document.getElementById('mode-free');
+        const tmplBtn = document.getElementById('mode-template');
+        const freeInput = document.getElementById('input-free');
+        const tmplInput = document.getElementById('input-template');
+
+        if (mode === 'free') {
+            freeBtn.className = "px-4 py-2 rounded-lg bg-primary text-white shadow-sm text-sm font-bold transition-all flex items-center gap-2";
+            tmplBtn.className = "px-4 py-2 rounded-lg text-[#ab9db9] hover:text-white hover:bg-white/5 text-sm font-medium transition-all flex items-center gap-2";
+            freeInput.classList.remove('hidden');
+            tmplInput.classList.add('hidden');
+        } else {
+            freeBtn.className = "px-4 py-2 rounded-lg text-[#ab9db9] hover:text-white hover:bg-white/5 text-sm font-medium transition-all flex items-center gap-2";
+            tmplBtn.className = "px-4 py-2 rounded-lg bg-primary text-white shadow-sm text-sm font-bold transition-all flex items-center gap-2";
+            freeInput.classList.add('hidden');
+            tmplInput.classList.remove('hidden');
+        }
+    }
+
+    function selectTemplateForGen(id) {
+        selectedTemplateId = id;
+        const tmpl = templates.find(t => t.id === id);
+        if (!tmpl) return;
+
+        setGenMode('template');
+        const arSelect = document.getElementById('gen-aspect-ratio');
+        if (arSelect) arSelect.value = tmpl.aspectRatio;
+
+        const container = document.getElementById('template-form-container');
+        container.innerHTML = '';
+
+        if (tmpl.fields.length === 0) {
+            container.innerHTML = `<div class="col-span-2 text-center text-[#ab9db9] text-sm pt-4">変数はありません。そのまま生成できます。</div>`;
+        } else {
+            tmpl.fields.forEach(field => {
+                const div = document.createElement('div');
+                div.className = "flex flex-col gap-1";
+                div.innerHTML = `
+                    <label class="text-[10px] font-bold text-[#ab9db9] uppercase">${field}</label>
+                    <input type="text" id="gen-field-${field}" placeholder="Value for ${field}..." class="w-full bg-[#2d2836] border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-all">
+                `;
+                container.appendChild(div);
+            });
+        }
+    }
+
+    async function handleGenerate() {
+        // 1. Prepare Params
+        const apiKey = document.getElementById('api-key-input').value;
+        const aspectRatio = document.getElementById('gen-aspect-ratio').value;
+        const count = parseInt(document.getElementById('gen-count').value) || 1;
+        const activeModel = MODELS[activeModelKey];
+
+        // 2. Prepare Prompt
+        let finalPrompt = "";
+        if (currentGenMode === 'free') {
+            finalPrompt = document.getElementById('prompt-input').value;
+        } else {
+            if (!selectedTemplateId) return alert("テンプレートを選択してください");
+            const tmpl = templates.find(t => t.id === selectedTemplateId);
+            finalPrompt = tmpl.prompt;
+            tmpl.fields.forEach(f => {
+                const val = document.getElementById(`gen-field-${f}`).value || "";
+                finalPrompt = finalPrompt.replace(new RegExp(`{{${f}}}`, 'g'), val);
+            });
+        }
+
+        if (!finalPrompt.trim()) return alert("プロンプトを入力してください");
+
+        // 3. Demo check
+        let isDemoMode = false;
+        if (!apiKey) {
+             const confirmDemo = confirm("API Keyが未入力です。デモモード（ダミー画像）で実行しますか？");
+             if(!confirmDemo) return;
+             isDemoMode = true;
+        }
+        
+        addMessage(finalPrompt, 'user');
+        
+        // 4. Parallel Generation Loop
+        const loadingIds = [];
+        for(let i=0; i<count; i++) {
+            loadingIds.push(addLoading());
+        }
+
+        const promises = loadingIds.map(async (loadId) => {
+            try {
+                let imageUrl = "";
+                let finalCost = "0.00";
+
+                if (isDemoMode) {
+                    // DEMO MODE logic
+                    await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+                    const seed = Math.floor(Math.random() * 10000);
+                    const [rw, rh] = aspectRatio.split(':').map(Number);
+                    const baseSize = 800;
+                    const w = Math.round(baseSize * (rw / Math.sqrt(rw * rh)));
+                    const h = Math.round(baseSize * (rh / Math.sqrt(rw * rh)));
+                    imageUrl = `https://picsum.photos/seed/${seed}/${w}/${h}`;
+                    finalCost = "0.00 (Demo)";
+
+                } else {
+                    // API Call logic (Restored from working code)
+                    let url = "";
+                    let requestBody = {};
+
+                    if (activeModel.type === "gemini") {
+                        // Gemini Native
+                        url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`;
+                        requestBody = {
+                            "contents": [ { "parts": [ { "text": finalPrompt } ] } ],
+                            "generationConfig": {
+                                "responseModalities": ["IMAGE"],
+                                "imageConfig": { "aspectRatio": aspectRatio, "imageSize": "1024" }
+                            }
+                        };
+                    } else {
+                        // Imagen (Legacy)
+                        url = `${activeModel.endpointBase}?key=${apiKey}`;
+                        requestBody = {
+                            "instances": [ { "prompt": finalPrompt } ],
+                            "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
+                        };
+                    }
+
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        throw new Error(`API Error ${response.status}: ${errText}`);
+                    }
+
+                    const data = await response.json();
+
+                    // Response Parsing
+                    if (activeModel.type === "gemini") {
+                        if (data.candidates && data.candidates[0]?.content?.parts) {
+                            const imagePart = data.candidates[0].content.parts.find(p => p.inlineData);
+                            if (imagePart) {
+                                imageUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+                            } else {
+                                throw new Error("Image blocked or failed (No inlineData)");
+                            }
+                        } else {
+                            throw new Error("Unexpected Gemini response");
+                        }
+                    } else {
+                        // Imagen
+                        if (data.predictions && data.predictions[0]?.bytesBase64Encoded) {
+                            imageUrl = "data:image/png;base64," + data.predictions[0].bytesBase64Encoded;
+                        } else if (data.images && data.images[0]) {
+                             imageUrl = data.images[0];
+                        } else {
+                            throw new Error("Unexpected Imagen response");
+                        }
+                    }
+                    finalCost = activeModel.cost;
+                }
+                
+                removeLoading(loadId);
+                addAIResult(imageUrl, activeModel.name, aspectRatio);
+
+            } catch (e) {
+                console.error(e);
+                removeLoading(loadId);
+                const container = document.getElementById('chat-container');
+                const errDiv = document.createElement('div');
+                errDiv.className = "text-red-400 bg-red-900/20 p-3 rounded mb-4 text-xs max-w-[80%]";
+                errDiv.innerText = `Error: ${e.message}`;
+                container.appendChild(errDiv);
+                container.scrollTop = container.scrollHeight;
+            }
+        });
+
+        await Promise.allSettled(promises);
+    }
+
+    // --- EDITOR LOGIC ---
+    function openEditor(id = null) {
+        switchView('editor');
+        const title = document.getElementById('editor-title');
+        const nameInput = document.getElementById('editor-name');
+        const promptInput = document.getElementById('editor-prompt');
+        const idInput = document.getElementById('editor-id');
+        const arSelect = document.getElementById('editor-aspect-ratio');
+        
+        if (id) {
+            const tmpl = templates.find(t => t.id === id);
+            title.innerText = "テンプレート編集";
+            nameInput.value = tmpl.name;
+            promptInput.value = tmpl.prompt;
+            idInput.value = tmpl.id;
+            arSelect.value = tmpl.aspectRatio;
+        } else {
+            title.innerText = "テンプレート作成";
+            nameInput.value = "";
+            promptInput.value = "";
+            idInput.value = "";
+            arSelect.value = "1:1";
+        }
+    }
+
+    function insertVariable() {
+        const textarea = document.getElementById('editor-prompt');
+        const cursor = textarea.selectionStart;
+        const text = textarea.value;
+        const insert = "{{変数}}";
+        textarea.value = text.slice(0, cursor) + insert + text.slice(cursor);
+        textarea.focus();
+        textarea.selectionStart = cursor + 2;
+        textarea.selectionEnd = cursor + 4;
+    }
+
+    function saveTemplate() {
+        const idInput = document.getElementById('editor-id');
+        const name = document.getElementById('editor-name').value;
+        const prompt = document.getElementById('editor-prompt').value;
+        const ar = document.getElementById('editor-aspect-ratio').value;
+
+        if (!name || !prompt) return alert("名前とプロンプトは必須です");
+
+        const regex = /\{\{(.+?)\}\}/g;
+        let match;
+        const fields = new Set();
+        while ((match = regex.exec(prompt)) !== null) {
+            fields.add(match[1]);
+        }
+
+        const newTemplate = {
+            id: idInput.value || 'tpl_' + Date.now(),
+            name: name,
+            prompt: prompt,
+            aspectRatio: ar,
+            fields: Array.from(fields)
+        };
+
+        if (idInput.value) {
+            const idx = templates.findIndex(t => t.id === idInput.value);
+            if (idx !== -1) templates[idx] = newTemplate;
+        } else {
+            templates.push(newTemplate);
+        }
+
+        saveTemplatesToStorage();
+        switchView('dashboard');
+        selectTemplateForGen(newTemplate.id);
+    }
+
+    function deleteTemplate(id) {
+        if(!confirm("本当に削除しますか？")) return;
+        templates = templates.filter(t => t.id !== id);
+        if (selectedTemplateId === id) {
+            selectedTemplateId = null;
+            setGenMode('free');
+        }
+        saveTemplatesToStorage();
+    }
+
+    // --- DOM HELPERS (Chat) ---
+    function addMessage(text, role) {
+        const container = document.getElementById('chat-container');
+        const div = document.createElement('div');
+        div.className = "flex items-end gap-3 justify-end group fade-in";
+        div.innerHTML = `
+            <div class="px-5 py-3 bg-[#2d2836] border border-border-dark text-white rounded-2xl rounded-tr-sm text-sm leading-relaxed shadow-sm max-w-[80%]">
+                ${text}
+            </div>
+        `;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function addLoading() {
+        const container = document.getElementById('chat-container');
+        const id = 'loading-' + Date.now() + Math.random();
+        const div = document.createElement('div');
+        div.id = id;
+        div.className = "flex items-start gap-3 justify-start max-w-[80%] fade-in mb-4";
+        div.innerHTML = `
+            <div class="size-8 flex items-center justify-center bg-primary rounded-full shrink-0 animate-pulse">
+                <span class="material-symbols-outlined text-white text-sm">smart_toy</span>
+            </div>
+            <div class="bg-surface-dark border border-border-dark rounded-2xl rounded-tl-sm p-4 shadow-xl">
+                 <div class="flex items-center gap-2 text-[#ab9db9] text-sm">Thinking...</div>
+            </div>
+        `;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+        return id;
+    }
+
+    function removeLoading(id) {
+        const el = document.getElementById(id);
+        if(el) el.remove();
+    }
+
+    function addAIResult(url, modelName, ratio) {
+        const container = document.getElementById('chat-container');
+        const div = document.createElement('div');
+        div.className = "flex items-start gap-3 justify-start max-w-[80%] fade-in mb-6";
+        div.innerHTML = `
+            <div class="size-8 flex items-center justify-center bg-primary rounded-full shrink-0 mt-1">
+                <span class="material-symbols-outlined text-white text-sm">auto_awesome</span>
+            </div>
+             <div class="bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl group">
+                <div class="relative cursor-pointer overflow-hidden bg-black/50" onclick="openModal('${url}')">
+                    <img src="${url}" class="w-full h-auto max-h-[400px] object-contain">
+                </div>
+                <div class="p-3 flex justify-between items-center bg-[#1a1421]">
+                     <div class="flex flex-col">
+                        <span class="text-xs font-bold text-white">${modelName}</span>
+                        <span class="text-[10px] text-[#ab9db9]">${ratio}</span>
+                     </div>
+                     <a href="${url}" download="generated.png" class="text-white hover:text-primary p-2 rounded-full hover:bg-white/10 transition-colors"><span class="material-symbols-outlined text-sm">download</span></a>
+                </div>
+            </div>
+        `;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function openModal(src) {
+        document.getElementById('modal-image').src = src;
+        document.getElementById('modal-download').href = src;
+        document.getElementById('image-modal').classList.remove('hidden');
+    }
+    function closeModal() {
+        document.getElementById('image-modal').classList.add('hidden');
+    }
+</script>
+</body>
+</html>
