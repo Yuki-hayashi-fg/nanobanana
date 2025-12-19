@@ -1364,9 +1364,19 @@
                         processQueue();
                     });
             } else if (nextTask.type === 'upscale_4k') {
+                if (nextTask.placeholderId) {
+                    updatePlaceholderStatus(nextTask.placeholderId, '🤖 4K生成中...');
+                }
+
                 runUpscale4kTask(nextTask)
+                    .then(() => {
+                        if (nextTask.placeholderId) removePlaceholder(nextTask.placeholderId);
+                    })
                     .catch(err => {
                         console.error(err);
+                        if (nextTask.placeholderId) {
+                            updatePlaceholderWithError(nextTask.placeholderId, err?.message || '4K生成に失敗しました');
+                        }
                         showFeedback(`4K生成に失敗しました: ${err.message}`, true);
                     })
                     .finally(() => {
@@ -1766,6 +1776,13 @@
         return id;
     }
 
+    function removePlaceholder(id) {
+        const el = document.getElementById(id);
+        if (el?.parentNode) {
+            el.parentNode.removeChild(el);
+        }
+    }
+
     function updatePlaceholderStatus(id, text) {
         const statusEl = document.getElementById(`${id}-status`);
         if (statusEl) statusEl.textContent = text;
@@ -1927,6 +1944,8 @@
 
         setUpscaleLoading(imageUrl, true);
 
+        const placeholderId = addGenerationPlaceholder('🤖 4K生成中...（待機中）');
+
         enqueueTask({
             type: 'upscale_4k',
             imageUrl,
@@ -1934,7 +1953,8 @@
             apiKey,
             modelKey: meta.modelKey,
             prompt: meta.prompt,
-            ratio: meta.ratio
+            ratio: meta.ratio,
+            placeholderId
         });
     }
 
