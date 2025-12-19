@@ -1354,6 +1354,7 @@
         updatePlaceholderStatus(placeholderId, '🤖 生成中...');
 
         const results = new Array(count);
+        const errors = [];
 
         const promises = new Array(count).fill(null).map(async (_unused, idx) => {
             try {
@@ -1436,8 +1437,10 @@
                 results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: snapshotModelKey };
 
             } catch (e) {
+                const message = e?.message || '生成に失敗しました';
                 console.error(e);
-                updatePlaceholderWithError(placeholderId, e?.message || '生成に失敗しました');
+                errors.push(message);
+                updatePlaceholderWithError(placeholderId, message);
             }
         });
 
@@ -1445,7 +1448,12 @@
 
         const validResults = results.filter(r => r && r.url);
 
-        if (validResults.length === 0) return;
+        if (validResults.length === 0) {
+            const joinedError = errors.filter(Boolean).join(' / ') || '生成に失敗しました';
+            updatePlaceholderWithError(placeholderId, joinedError);
+            showFeedback(`画像生成に失敗しました: ${joinedError}`, true);
+            return;
+        }
 
         validResults.forEach(res => {
             setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey });
