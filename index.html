@@ -230,9 +230,9 @@
 
                         </div>
 
-                        <button onclick="handleGenerate()" id="generate-btn" class="flex-1 py-3 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap min-h-[50px]" data-loading="0">
+                        <button onclick="handleGenerate()" id="generate-btn" class="flex-1 py-3 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap min-h-[50px]">
                             <span class="material-symbols-outlined text-2xl">auto_awesome</span>
-                            <span class="md:hidden lg:inline" data-generate-label>Generate</span>
+                            <span class="md:hidden lg:inline">Generate</span>
                         </button>
                     </div>
                 </div>
@@ -1235,93 +1235,43 @@
         pill.classList.remove('hidden');
     }
 
-    let generationQueue = Promise.resolve();
-    let queuedGenerationCount = 0;
-
-    function setGenerateButtonState(isBusy) {
-        const btn = document.getElementById('generate-btn');
-        if (!btn) return;
-        const label = btn.querySelector('[data-generate-label]');
-        btn.dataset.loading = isBusy ? '1' : '0';
-        btn.classList.toggle('opacity-80', isBusy);
-        btn.classList.toggle('cursor-wait', isBusy);
-        if (label) {
-            label.textContent = isBusy ? `Generating (${queuedGenerationCount})` : 'Generate';
-        }
-    }
-
-    function prepareGenerationParams() {
+    async function handleGenerate() {
+        // 1. Prepare Params
         const apiKey = document.getElementById('settings-api-key-input').value;
-        const aspectInput = document.getElementById('gen-aspect-ratio');
-        const aspectRatio = sanitizeAspectRatio(aspectInput.value);
-        aspectInput.value = aspectRatio;
+        const aspectRatio = sanitizeAspectRatio(document.getElementById('gen-aspect-ratio').value);
+        document.getElementById('gen-aspect-ratio').value = aspectRatio;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
         const activeModel = MODELS[activeModelKey];
 
-        if (!activeModel) {
-            showFeedback('モデルが選択されていません。', true);
-            return null;
-        }
-
-        let finalPrompt = '';
+        // 2. Prepare Prompt
+        let finalPrompt = "";
         if (currentGenMode === 'free') {
             finalPrompt = document.getElementById('prompt-input').value;
         } else {
-            if (!selectedTemplateId) {
-                showFeedback('テンプレートを選択してください', true);
-                return null;
-            }
+            if (!selectedTemplateId) return showFeedback("テンプレートを選択してください", true);
             const tmpl = templates.find(t => t.id === selectedTemplateId);
             finalPrompt = tmpl.prompt;
             tmpl.fields.forEach(f => {
-                const val = document.getElementById(`gen-field-${f}`).value || '';
+                const val = document.getElementById(`gen-field-${f}`).value || "";
                 finalPrompt = finalPrompt.replace(new RegExp(`{{${f}}}`, 'g'), val);
             });
         }
 
-        if (!finalPrompt.trim()) {
-            showFeedback('プロンプトを入力してください', true);
-            return null;
-        }
+        if (!finalPrompt.trim()) return showFeedback("プロンプトを入力してください", true);
 
+        // 3. Demo check
         let isDemoMode = false;
         if (!apiKey) {
-            const confirmDemo = confirm('API Keyが未入力です。デモモード（ダミー画像）で実行しますか？');
-            if (!confirmDemo) return null;
-            isDemoMode = true;
+             const confirmDemo = confirm("API Keyが未入力です。デモモード（ダミー画像）で実行しますか？");
+             if(!confirmDemo) return;
+             isDemoMode = true;
         }
-
-        return { apiKey, aspectRatio, count, activeModelKey, finalPrompt, isDemoMode };
-    }
-
-    function queueGeneration(params) {
-        queuedGenerationCount += 1;
-        setGenerateButtonState(true);
-        generationQueue = generationQueue
-            .then(() => executeGeneration(params))
-            .catch(err => {
-                console.error(err);
-                showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-            })
-            .finally(() => {
-                queuedGenerationCount -= 1;
-                setGenerateButtonState(queuedGenerationCount > 0);
-            });
-    }
-
-    async function executeGeneration(params) {
-        const { apiKey, aspectRatio, count, activeModelKey, finalPrompt, isDemoMode } = params;
-        const activeModel = MODELS[activeModelKey];
-
-        if (!activeModel) {
-            showFeedback('モデルが選択されていません。', true);
-            return;
-        }
-
+        
         addMessage(finalPrompt, 'user');
-
+        
+        // 4. Parallel Generation Loop
         const loadingIds = [];
-        for (let i = 0; i < count; i++) {
+        for(let i=0; i<count; i++) {
             loadingIds.push(addLoading());
         }
 
@@ -1329,9 +1279,11 @@
 
         const promises = loadingIds.map(async (loadId, idx) => {
             try {
-                let imageUrl = '';
+                let imageUrl = "";
+                let finalCost = "0.00";
 
                 if (isDemoMode) {
+                    // DEMO MODE logic
                     await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
                     const seed = Math.floor(Math.random() * 10000);
                     const [rw, rh] = aspectRatio.split(':').map(Number);
@@ -1339,24 +1291,29 @@
                     const w = Math.round(baseSize * (rw / Math.sqrt(rw * rh)));
                     const h = Math.round(baseSize * (rh / Math.sqrt(rw * rh)));
                     imageUrl = `https://picsum.photos/seed/${seed}/${w}/${h}`;
+                    finalCost = "0.00 (Demo)";
+
                 } else {
-                    let url = '';
+                    // API Call logic (Restored from working code)
+                    let url = "";
                     let requestBody = {};
 
-                    if (activeModel.type === 'gemini') {
+                    if (activeModel.type === "gemini") {
+                        // Gemini Native
                         url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`;
                         requestBody = {
-                            contents: [ { parts: [ { text: finalPrompt } ] } ],
-                            generationConfig: {
-                                responseModalities: ['IMAGE'],
-                                imageConfig: { aspectRatio: aspectRatio, imageSize: '1024' }
+                            "contents": [ { "parts": [ { "text": finalPrompt } ] } ],
+                            "generationConfig": {
+                                "responseModalities": ["IMAGE"],
+                                "imageConfig": { "aspectRatio": aspectRatio, "imageSize": "1024" }
                             }
                         };
                     } else {
+                        // Imagen (Legacy)
                         url = `${activeModel.endpointBase}?key=${apiKey}`;
                         requestBody = {
-                            instances: [ { prompt: finalPrompt } ],
-                            parameters: { sampleCount: 1, aspectRatio: aspectRatio }
+                            "instances": [ { "prompt": finalPrompt } ],
+                            "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
                         };
                     }
 
@@ -1373,28 +1330,31 @@
 
                     const data = await response.json();
 
-                    if (activeModel.type === 'gemini') {
+                    // Response Parsing
+                    if (activeModel.type === "gemini") {
                         if (data.candidates && data.candidates[0]?.content?.parts) {
                             const imagePart = data.candidates[0].content.parts.find(p => p.inlineData);
                             if (imagePart) {
                                 imageUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
                             } else {
-                                throw new Error('Image blocked or failed (No inlineData)');
+                                throw new Error("Image blocked or failed (No inlineData)");
                             }
                         } else {
-                            throw new Error('Unexpected Gemini response');
+                            throw new Error("Unexpected Gemini response");
                         }
                     } else {
+                        // Imagen
                         if (data.predictions && data.predictions[0]?.bytesBase64Encoded) {
-                            imageUrl = 'data:image/png;base64,' + data.predictions[0].bytesBase64Encoded;
+                            imageUrl = "data:image/png;base64," + data.predictions[0].bytesBase64Encoded;
                         } else if (data.images && data.images[0]) {
-                            imageUrl = data.images[0];
+                             imageUrl = data.images[0];
                         } else {
-                            throw new Error('Unexpected Imagen response');
+                            throw new Error("Unexpected Imagen response");
                         }
                     }
+                    finalCost = activeModel.cost;
                 }
-
+                
                 results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: activeModelKey };
                 removeLoading(loadId);
 
@@ -1403,7 +1363,7 @@
                 removeLoading(loadId);
                 const container = document.getElementById('chat-container');
                 const errDiv = document.createElement('div');
-                errDiv.className = 'text-red-400 bg-red-900/20 p-3 rounded mb-4 text-xs max-w-[80%]';
+                errDiv.className = "text-red-400 bg-red-900/20 p-3 rounded mb-4 text-xs max-w-[80%]";
                 errDiv.innerText = `Error: ${e.message}`;
                 container.appendChild(errDiv);
                 container.scrollTop = container.scrollHeight;
@@ -1428,12 +1388,6 @@
             const single = validResults[0];
             addAIResult(single.url, single.modelName, single.ratio);
         }
-    }
-
-    function handleGenerate() {
-        const params = prepareGenerationParams();
-        if (!params) return;
-        queueGeneration(params);
     }
 
     // --- EDITOR LOGIC ---
