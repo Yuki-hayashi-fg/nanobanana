@@ -420,9 +420,14 @@
     <div class="flex flex-col gap-4 max-h-screen w-full max-w-5xl">
         <div class="relative flex-1 rounded-xl overflow-hidden flex items-center justify-center group bg-black/40">
             <img id="modal-image" src="" class="max-h-[75vh] w-auto object-contain shadow-2xl rounded-lg">
-            <a id="modal-download" href="#" download="generated.png" class="absolute bottom-6 right-6 bg-white/20 hover:bg-primary text-white p-3 rounded-full backdrop-blur-xl transition-all opacity-0 group-hover:opacity-100 border border-white/10">
-                <span class="material-symbols-outlined">download</span>
-            </a>
+            <div class="absolute bottom-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button id="modal-upscale-btn" onclick="event.stopPropagation(); regenerate4kFromModal();" class="upscale-btn px-4 py-2 rounded-full border border-white/15 bg-white/15 hover:bg-primary text-white text-sm font-bold shadow-lg shadow-black/30 disabled:opacity-60 disabled:cursor-not-allowed" data-image-url="">
+                    4Kにする
+                </button>
+                <a id="modal-download" href="#" download="generated.png" class="bg-white/20 hover:bg-primary text-white p-3 rounded-full backdrop-blur-xl transition-all border border-white/10">
+                    <span class="material-symbols-outlined">download</span>
+                </a>
+            </div>
         </div>
         <div id="modal-prompt-container" class="bg-surface-dark border border-border-dark rounded-xl p-4 space-y-2 shadow-lg shadow-black/40 hidden">
             <div class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider flex items-center gap-2">
@@ -498,6 +503,7 @@
     let currentGenMode = 'free';
     let selectedTemplateId = null;
     let imageHistory = [];
+    const imageMeta = new Map();
 
     // --- Settings Helpers ---
     function encryptApiKey(value) {
@@ -562,6 +568,30 @@
         showToast(message, isError);
     }
 
+    function setImageMeta(url, meta) {
+        if (!url) return;
+        const current = imageMeta.get(url) || {};
+        imageMeta.set(url, { ...current, ...meta });
+    }
+
+    function simplifyRatio(width, height) {
+        if (!width || !height) return null;
+        const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+        const divisor = gcd(width, height);
+        return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
+    }
+
+    async function deriveAspectRatio(url) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                resolve(simplifyRatio(img.naturalWidth, img.naturalHeight) || '1:1');
+            };
+            img.onerror = () => resolve('1:1');
+            img.src = url;
+        });
+    }
+
     async function loadApiKeyFromDB(userId) {
         if (!userId) return;
         const { data, error } = await supabaseClient
@@ -624,6 +654,10 @@
             const img = document.createElement('img');
             img.src = entry.image_url;
             img.className = "w-full h-48 object-cover";
+
+            img.onload = () => {
+                setImageMeta(entry.image_url, { prompt: entry.prompt, ratio: simplifyRatio(img.naturalWidth, img.naturalHeight), modelKey: 'gemini-3-pro-image-preview' });
+            };
 
             imgWrap.onclick = () => openModal(entry.image_url, entry.prompt);
 
@@ -1254,7 +1288,7 @@
                     finalCost = activeModel.cost;
                 }
                 
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio };
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: activeModelKey };
                 removeLoading(loadId);
 
             } catch (e) {
@@ -1274,6 +1308,10 @@
         const validResults = results.filter(r => r && r.url);
 
         if (validResults.length === 0) return;
+
+        validResults.forEach(res => {
+            setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey });
+        });
 
         await Promise.allSettled(validResults.map(res => saveImageHistory(finalPrompt, res.url)));
 
@@ -1443,6 +1481,122 @@
         if(el) el.remove();
     }
 
+    function updateUpscaleButtonState(button) {
+        if (!button) return;
+        const url = button.dataset.imageUrl;
+        const apiKey = document.getElementById('settings-api-key-input').value.trim();
+        const meta = imageMeta.get(url);
+        const model = meta?.modelKey ? MODELS[meta.modelKey] : null;
+        const isGemini = model?.type === 'gemini';
+        const enabled = !!meta && isGemini && !!apiKey && button.dataset.loading !== '1';
+        button.disabled = !enabled;
+        button.textContent = button.dataset.loading === '1' ? '4K生成中...' : '4Kにする';
+    }
+
+    function setUpscaleLoading(imageUrl, isLoading) {
+        document.querySelectorAll('.upscale-btn').forEach(btn => {
+            if (btn.dataset.imageUrl === imageUrl) {
+                btn.dataset.loading = isLoading ? '1' : '0';
+                updateUpscaleButtonState(btn);
+            }
+        });
+        const modalBtn = document.getElementById('modal-upscale-btn');
+        const modalImage = document.getElementById('modal-image');
+        if (modalBtn && modalImage && modalImage.src === imageUrl) {
+            modalBtn.dataset.loading = isLoading ? '1' : '0';
+            updateUpscaleButtonState(modalBtn);
+        }
+    }
+
+    async function imageToBase64(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('元画像の取得に失敗しました');
+        const blob = await response.blob();
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        bytes.forEach(b => binary += String.fromCharCode(b));
+        return { data: btoa(binary), mimeType: blob.type || 'image/png' };
+    }
+
+    async function regenerate4kFromModal() {
+        const modalImage = document.getElementById('modal-image');
+        if (modalImage?.src) {
+            await regenerate4k(modalImage.src, true);
+        }
+    }
+
+    async function regenerate4k(imageUrl, reopenModal = false) {
+        const meta = imageMeta.get(imageUrl);
+        const apiKey = document.getElementById('settings-api-key-input').value.trim();
+
+        if (!meta || !meta.prompt) {
+            showFeedback('この画像のプロンプト情報が見つかりません。', true);
+            return;
+        }
+
+        if (!apiKey) {
+            showFeedback('4K再生成にはAPIキーを入力してください。', true);
+            return;
+        }
+
+        const model = meta.modelKey ? MODELS[meta.modelKey] : null;
+        if (!model || model.type !== 'gemini') {
+            showFeedback('4K再生成はGemini画像モデルで生成された画像のみ対応しています。', true);
+            return;
+        }
+
+        setUpscaleLoading(imageUrl, true);
+
+        try {
+            const ratio = meta.ratio || await deriveAspectRatio(imageUrl) || '1:1';
+            setImageMeta(imageUrl, { ratio });
+
+            const inlineData = await imageToBase64(imageUrl);
+            const requestBody = {
+                contents: [ { parts: [ { text: meta.prompt }, { inlineData } ] } ],
+                generationConfig: {
+                    responseModalities: ['IMAGE'],
+                    imageConfig: { aspectRatio: ratio, imageSize: '4K' }
+                }
+            };
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${apiKey}`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`API Error ${response.status}: ${errText}`);
+            }
+
+            const data = await response.json();
+            const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (!imagePart?.inlineData?.data || !imagePart.inlineData.mimeType) {
+                throw new Error('4K画像の取得に失敗しました');
+            }
+
+            const newUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+            setImageMeta(newUrl, { prompt: meta.prompt, ratio, modelKey: meta.modelKey });
+
+            addAIResult(newUrl, model.name, `${ratio} / 4K`);
+            await saveImageHistory(meta.prompt, newUrl);
+            showFeedback('4K画像を生成しました');
+
+            if (reopenModal) {
+                openModal(newUrl, meta.prompt);
+            }
+        } catch (error) {
+            console.error(error);
+            showFeedback(`4K生成に失敗しました: ${error.message}`, true);
+        } finally {
+            setUpscaleLoading(imageUrl, false);
+        }
+    }
+
     function addAIResult(url, modelName, ratio) {
         const container = document.getElementById('chat-container');
         const div = document.createElement('div');
@@ -1460,11 +1614,16 @@
                         <span class="text-xs font-bold text-white">${modelName}</span>
                         <span class="text-[10px] text-[#ab9db9]">${ratio}</span>
                      </div>
-                     <a href="${url}" download="generated.png" class="text-white hover:text-primary p-2 rounded-full hover:bg-white/10 transition-colors"><span class="material-symbols-outlined text-sm">download</span></a>
+                     <div class="flex items-center gap-2">
+                        <button class="upscale-btn text-white text-[11px] font-bold px-3 py-1.5 rounded-full border border-white/10 bg-white/10 hover:bg-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed" data-image-url="${url}" onclick="event.stopPropagation(); regenerate4k('${url}');">4Kにする</button>
+                        <a href="${url}" download="generated.png" class="text-white hover:text-primary p-2 rounded-full hover:bg-white/10 transition-colors"><span class="material-symbols-outlined text-sm">download</span></a>
+                     </div>
                 </div>
             </div>
         `;
         container.appendChild(div);
+        const upscaleBtn = div.querySelector('.upscale-btn');
+        updateUpscaleButtonState(upscaleBtn);
         container.scrollTop = container.scrollHeight;
     }
 
@@ -1502,10 +1661,18 @@
             dl.className = "absolute top-2 right-2 bg-white/15 hover:bg-primary text-white p-2 rounded-full backdrop-blur border border-white/10 transition-colors";
             dl.innerHTML = `<span class="material-symbols-outlined text-sm">download</span>`;
 
+            const upscale = document.createElement('button');
+            upscale.className = "upscale-btn absolute bottom-2 left-2 text-[11px] font-bold px-3 py-1.5 rounded-full border border-white/10 bg-white/15 hover:bg-primary text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed";
+            upscale.dataset.imageUrl = res.url;
+            upscale.textContent = '4Kにする';
+            upscale.onclick = (event) => { event.stopPropagation(); regenerate4k(res.url); };
+
             item.appendChild(img);
             item.appendChild(badge);
             item.appendChild(dl);
+            item.appendChild(upscale);
             grid.appendChild(item);
+            updateUpscaleButtonState(upscale);
         });
 
         const footer = document.createElement('div');
@@ -1527,15 +1694,27 @@
         const promptElement = document.getElementById('modal-prompt');
         document.getElementById('modal-image').src = src;
         document.getElementById('modal-download').href = src;
+        const meta = imageMeta.get(src);
+        const promptText = prompt || meta?.prompt || '';
 
         if (promptContainer && promptElement) {
-            if (prompt) {
-                promptElement.textContent = prompt;
+            if (promptText) {
+                promptElement.textContent = promptText;
                 promptContainer.classList.remove('hidden');
             } else {
                 promptElement.textContent = '';
                 promptContainer.classList.add('hidden');
             }
+        }
+
+        if (!meta?.ratio) {
+            deriveAspectRatio(src).then(ratio => setImageMeta(src, { ratio }));
+        }
+
+        const upscaleBtn = document.getElementById('modal-upscale-btn');
+        if (upscaleBtn) {
+            upscaleBtn.dataset.imageUrl = src;
+            updateUpscaleButtonState(upscaleBtn);
         }
 
         document.getElementById('image-modal').classList.remove('hidden');
