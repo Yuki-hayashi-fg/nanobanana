@@ -1442,7 +1442,7 @@
         const errors = [];
 
         const promptForRequest = styleReference
-            ? `${finalPrompt} Apply the artistic style, color palette, and texture of the provided reference image.`
+            ? `${finalPrompt} Use the reference image only for stylistic guidance such as line thickness, softness, brush texture, and color treatment. Do not copy its composition, subject arrangement, pose, or camera angle; follow the layout described in the text prompt instead.`
             : finalPrompt;
 
         const promises = new Array(count).fill(null).map(async (_unused, idx) => {
