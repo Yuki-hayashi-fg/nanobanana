@@ -438,6 +438,27 @@
     </div>
 </div>
 
+<div id="delete-confirm-modal" class="fixed inset-0 z-50 bg-black/70 hidden backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-surface-dark border border-border-dark rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 fade-in">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-xs uppercase text-[#ab9db9] font-bold tracking-wider">Confirm</p>
+                <h3 class="text-lg font-display font-bold">削除の確認</h3>
+            </div>
+            <button onclick="closeDeleteModal()" class="text-[#ab9db9] hover:text-white transition-colors">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+
+        <p class="text-sm text-gray-200">テンプレート「<span id="delete-template-name" class="font-bold text-white"></span>」を削除しますか？</p>
+
+        <div class="flex items-center justify-end gap-3">
+            <button onclick="closeDeleteModal()" class="px-4 py-2 rounded-lg border border-border-dark text-sm text-[#ab9db9] hover:text-white hover:bg-white/5 transition-colors">いいえ</button>
+            <button onclick="confirmDeleteTemplate()" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-400 text-white font-bold shadow-lg shadow-red-500/30 transition-all">はい</button>
+        </div>
+    </div>
+</div>
+
 <script>
     // --- Storage Helpers ---
     class MemoryStorage {
@@ -508,6 +529,7 @@
     let activeModelKey = "gemini-3-pro-image-preview";
     let currentGenMode = 'free';
     let selectedTemplateId = null;
+    let pendingDeleteTemplateId = null;
     let imageHistory = [];
     const imageMeta = new Map();
 
@@ -1129,7 +1151,7 @@
                     <button onclick="openEditor('${t.id}')" class="p-1 hover:text-white text-gray-500" title="編集">
                         <span class="material-symbols-outlined text-sm">edit</span>
                     </button>
-                    <button onclick="deleteTemplate('${t.id}')" class="p-1 hover:text-red-400 text-gray-500" title="削除">
+                    <button onclick="openDeleteModal('${t.id}')" class="p-1 hover:text-red-400 text-gray-500" title="削除">
                         <span class="material-symbols-outlined text-sm">delete</span>
                     </button>
                 </div>
@@ -1427,7 +1449,8 @@
 
         const fields = new Set(extractFieldsFromPrompt(prompt));
 
-        const templateId = idInput.value || crypto.randomUUID();
+        const existingId = idInput.value.trim();
+        const templateId = existingId || crypto.randomUUID();
 
         const newTemplate = {
             id: templateId,
@@ -1438,19 +1461,28 @@
         };
 
         const payload = {
-            id: templateId,
-            user_id: currentUserId,
             title: name,
             content: JSON.stringify({
                 prompt: prompt,
                 aspectRatio: ar,
                 fields: Array.from(fields),
-            })
+            }),
+            user_id: currentUserId,
         };
 
-        const { error } = await supabaseClient
-            .from('templates')
-            .upsert(payload, { onConflict: 'id,user_id' });
+        let error = null;
+        if (existingId) {
+            ({ error } = await supabaseClient
+                .from('templates')
+                .update(payload)
+                .eq('id', existingId)
+                .eq('user_id', currentUserId));
+        } else {
+            const insertPayload = { ...payload, id: templateId };
+            ({ error } = await supabaseClient
+                .from('templates')
+                .insert([insertPayload]));
+        }
         if (error) {
             console.warn('テンプレートの保存に失敗しました', error);
             showFeedback('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
@@ -1464,8 +1496,27 @@
         showFeedback('テンプレートを保存しました');
     }
 
+    function openDeleteModal(id) {
+        pendingDeleteTemplateId = id;
+        const modal = document.getElementById('delete-confirm-modal');
+        const nameEl = document.getElementById('delete-template-name');
+        const tmpl = templates.find(t => t.id === id);
+        if (nameEl) nameEl.textContent = tmpl?.name || '';
+        if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeDeleteModal() {
+        pendingDeleteTemplateId = null;
+        const modal = document.getElementById('delete-confirm-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    async function confirmDeleteTemplate() {
+        if (!pendingDeleteTemplateId) return;
+        await deleteTemplate(pendingDeleteTemplateId);
+    }
+
     async function deleteTemplate(id) {
-        if(!confirm("本当に削除しますか？")) return;
         if (!currentUserId) return showFeedback('ログイン後に削除してください', true);
 
         const { error } = await supabaseClient
@@ -1480,6 +1531,7 @@
             return;
         }
 
+        closeDeleteModal();
         templates = templates.filter(t => t.id !== id);
         if (selectedTemplateId === id) {
             selectedTemplateId = null;
