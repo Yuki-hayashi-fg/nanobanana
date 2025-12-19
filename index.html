@@ -1249,9 +1249,7 @@
         pill.classList.remove('hidden');
     }
 
-    const generationTaskQueue = [];
-    let activeGenerationCount = 0;
-    const MAX_PARALLEL_GENERATIONS = 3;
+    let generationQueue = Promise.resolve();
 
     async function handleGenerate() {
         // 1. Prepare Params
@@ -1292,54 +1290,32 @@
 
         addMessage(finalPrompt, 'user');
 
-        const placeholderId = createPlaceholder();
-
-        const promptInput = document.getElementById('prompt-input');
-        if (promptInput) promptInput.value = '';
-        document.querySelectorAll('#template-form-container input').forEach(input => input.value = '');
-
         const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
 
-        enqueueGenerationTask(request, placeholderId);
+        generationQueue = generationQueue
+            .then(() => runGenerationTask(request))
+            .catch(err => {
+                console.error(err);
+                showFeedback(`画像生成に失敗しました: ${err.message}`, true);
+            });
     }
 
-    function enqueueGenerationTask(request, placeholderId) {
-        generationTaskQueue.push({ request, placeholderId });
-        processGenerationQueue();
-    }
-
-    function processGenerationQueue() {
-        while (activeGenerationCount < MAX_PARALLEL_GENERATIONS && generationTaskQueue.length > 0) {
-            const nextTask = generationTaskQueue.shift();
-            activeGenerationCount += 1;
-            runGenerationTask(nextTask)
-                .catch(err => {
-                    console.error(err);
-                    showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-                })
-                .finally(() => {
-                    activeGenerationCount -= 1;
-                    processGenerationQueue();
-                });
-        }
-    }
-
-    async function runGenerationTask({ request, placeholderId }) {
-        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode } = request;
+    async function runGenerationTask({ apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode }) {
         const activeModel = MODELS[snapshotModelKey];
         if (!activeModel) {
             showFeedback("モデルを選択してください", true);
-            setPlaceholderError(placeholderId, 'エラー: モデルが選択されていません');
             return;
         }
 
-        setPlaceholderStatus(placeholderId, '🤖 生成中...');
-
         // 4. Parallel Generation Loop
-        const results = new Array(count);
-        const errors = [];
+        const loadingIds = [];
+        for(let i=0; i<count; i++) {
+            loadingIds.push(addLoading());
+        }
 
-        const promises = Array.from({ length: count }).map(async (_, idx) => {
+        const results = new Array(count);
+
+        const promises = loadingIds.map(async (loadId, idx) => {
             try {
                 let imageUrl = "";
                 let finalCost = "0.00";
@@ -1418,9 +1394,17 @@
                 }
 
                 results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: snapshotModelKey };
+                removeLoading(loadId);
+
             } catch (e) {
                 console.error(e);
-                errors.push(e);
+                removeLoading(loadId);
+                const container = document.getElementById('chat-container');
+                const errDiv = document.createElement('div');
+                errDiv.className = "text-red-400 bg-red-900/20 p-3 rounded mb-4 text-xs max-w-[80%]";
+                errDiv.innerText = `Error: ${e.message}`;
+                container.appendChild(errDiv);
+                container.scrollTop = container.scrollHeight;
             }
         });
 
@@ -1428,10 +1412,7 @@
 
         const validResults = results.filter(r => r && r.url);
 
-        if (validResults.length === 0) {
-            setPlaceholderError(placeholderId, `エラー: ${errors[0]?.message || '画像生成に失敗しました'}`);
-            return;
-        }
+        if (validResults.length === 0) return;
 
         validResults.forEach(res => {
             setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey });
@@ -1439,7 +1420,12 @@
 
         await Promise.allSettled(validResults.map(res => saveImageHistory(finalPrompt, res.url)));
 
-        renderPlaceholderResult(placeholderId, validResults, activeModel.name);
+        if (validResults.length > 1) {
+            addAIResultGroup(validResults, activeModel.name);
+        } else {
+            const single = validResults[0];
+            addAIResult(single.url, single.modelName, single.ratio);
+        }
     }
 
     // --- EDITOR LOGIC ---
@@ -1607,18 +1593,18 @@
         container.scrollTop = container.scrollHeight;
     }
 
-    function createPlaceholder(initialText = '🤖 生成中...(待機中)') {
+    function addLoading() {
         const container = document.getElementById('chat-container');
-        const id = 'placeholder-' + Date.now() + Math.random();
+        const id = 'loading-' + Date.now() + Math.random();
         const div = document.createElement('div');
         div.id = id;
         div.className = "flex items-start gap-3 justify-start max-w-[80%] fade-in mb-4";
         div.innerHTML = `
-            <div class="size-8 flex items-center justify-center bg-primary rounded-full shrink-0">
+            <div class="size-8 flex items-center justify-center bg-primary rounded-full shrink-0 animate-pulse">
                 <span class="material-symbols-outlined text-white text-sm">smart_toy</span>
             </div>
-            <div class="flex-1 bg-surface-dark border border-border-dark rounded-2xl rounded-tl-sm p-4 shadow-xl" id="${id}-content">
-                <div class="flex items-center gap-2 text-[#ab9db9] text-sm">${initialText}</div>
+            <div class="bg-surface-dark border border-border-dark rounded-2xl rounded-tl-sm p-4 shadow-xl">
+                 <div class="flex items-center gap-2 text-[#ab9db9] text-sm">Thinking...</div>
             </div>
         `;
         container.appendChild(div);
@@ -1626,85 +1612,9 @@
         return id;
     }
 
-    function setPlaceholderStatus(id, text) {
-        const content = document.getElementById(`${id}-content`);
-        if (!content) return;
-        content.innerHTML = `<div class="flex items-center gap-2 text-[#ab9db9] text-sm">${text}</div>`;
-    }
-
-    function setPlaceholderError(id, message) {
-        const content = document.getElementById(`${id}-content`);
-        if (!content) return;
-        content.innerHTML = `<div class="text-red-400 bg-red-900/20 p-3 rounded text-xs">${message}</div>`;
-    }
-
-    function renderPlaceholderResult(id, results, modelName) {
-        const content = document.getElementById(`${id}-content`);
-        if (!content) return;
-
-        if (results.length > 1) {
-            const wrapper = document.createElement('div');
-            wrapper.className = "bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl";
-
-            const grid = document.createElement('div');
-            grid.className = "grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-black/30";
-
-            results.forEach((res, index) => {
-                const item = document.createElement('div');
-                item.className = "relative cursor-pointer overflow-hidden bg-black/50 rounded-xl border border-border-dark";
-
-                const img = document.createElement('img');
-                img.src = res.url;
-                img.className = "w-full h-auto max-h-[320px] object-contain";
-                img.onclick = () => openModal(res.url);
-
-                const badge = document.createElement('div');
-                badge.className = "absolute top-2 left-2 bg-primary text-[10px] px-2 py-1 rounded-full font-bold";
-                badge.innerText = `#${index + 1} ${res.ratio}`;
-
-                const dl = document.createElement('a');
-                dl.href = res.url;
-                dl.download = `generated-${index + 1}.png`;
-                dl.className = "absolute top-2 right-2 bg-white/15 hover:bg-primary text-white p-2 rounded-full backdrop-blur border border-white/10 transition-colors";
-                dl.innerHTML = '<span class="material-symbols-outlined text-sm">download</span>';
-
-                item.appendChild(img);
-                item.appendChild(badge);
-                item.appendChild(dl);
-                grid.appendChild(item);
-            });
-
-            const footer = document.createElement('div');
-            footer.className = "p-3 bg-[#1a1421] flex items-center justify-between";
-            footer.innerHTML = `<div class="text-xs font-bold text-white">${modelName}</div><div class="text-[11px] text-[#ab9db9]">${results.length} images</div>`;
-
-            wrapper.appendChild(grid);
-            wrapper.appendChild(footer);
-            content.innerHTML = "";
-            content.appendChild(wrapper);
-            return;
-        }
-
-        const single = results[0];
-        content.innerHTML = `
-            <div class="bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl">
-                <div class="relative cursor-pointer overflow-hidden bg-black/50" onclick="openModal('${single.url}')">
-                    <img src="${single.url}" class="w-full h-auto max-h-[400px] object-contain">
-                </div>
-                <div class="p-3 flex justify-between items-center bg-[#1a1421]">
-                     <div class="flex flex-col">
-                        <span class="text-xs font-bold text-white">${modelName}</span>
-                        <span class="text-[10px] text-[#ab9db9]">${single.ratio}</span>
-                     </div>
-                     <div class="flex items-center gap-2">
-                        <button class="upscale-btn text-white text-[11px] font-bold px-3 py-1.5 rounded-full border border-white/10 bg-white/10 hover:bg-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed" data-image-url="${single.url}" onclick="event.stopPropagation(); regenerate4k('${single.url}');">4Kにする</button>
-                        <a href="${single.url}" download="generated.png" class="text-white hover:text-primary p-2 rounded-full hover:bg-white/10 transition-colors"><span class="material-symbols-outlined text-sm">download</span></a>
-                     </div>
-                </div>
-            </div>
-        `;
-
-        content.querySelectorAll('.upscale-btn').forEach(btn => updateUpscaleButtonState(btn));
+    function removeLoading(id) {
+        const el = document.getElementById(id);
+        if(el) el.remove();
     }
 
     function updateUpscaleButtonState(button) {
