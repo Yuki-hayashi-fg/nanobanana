@@ -46,11 +46,13 @@
         .toast.toast-error { border-color: rgba(248, 113, 113, 0.5); background: linear-gradient(135deg, rgba(248, 113, 113, 0.14), rgba(20, 18, 24, 0.95)); color: #fecdd3; }
         .toast-hide { opacity: 0; transform: translateY(-10px); transition: opacity 200ms ease, transform 200ms ease; }
         @keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        #message-banner { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 9998; pointer-events: none; }
     </style>
 </head>
 <body class="bg-background-dark text-white font-body h-screen flex overflow-hidden selection:bg-primary selection:text-white">
 
 <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+<div id="message-banner" class="hidden px-4 py-2 rounded-lg border text-sm font-semibold bg-white/10 border-white/20 shadow-lg shadow-black/30"></div>
 
 <div id="auth-screen" class="flex flex-1 items-center justify-center w-full px-4">
     <div class="w-full max-w-md bg-surface-dark border border-border-dark rounded-2xl p-8 shadow-2xl space-y-6">
@@ -537,6 +539,29 @@
         }, 3000);
     }
 
+    let bannerTimeout;
+    function showBanner(message, isError = false) {
+        const banner = document.getElementById('message-banner');
+        if (!banner) return;
+
+        banner.textContent = message;
+        banner.classList.remove('hidden', 'text-red-300', 'border-red-400/70', 'bg-red-500/10', 'text-green-300', 'border-green-400/70', 'bg-green-500/10');
+
+        if (isError) {
+            banner.classList.add('text-red-300', 'border-red-400/70', 'bg-red-500/10');
+        } else {
+            banner.classList.add('text-green-300', 'border-green-400/70', 'bg-green-500/10');
+        }
+
+        clearTimeout(bannerTimeout);
+        bannerTimeout = setTimeout(() => banner.classList.add('hidden'), 3500);
+    }
+
+    function showFeedback(message, isError = false) {
+        showBanner(message, isError);
+        showToast(message, isError);
+    }
+
     async function loadApiKeyFromDB(userId) {
         if (!userId) return;
         const { data, error } = await supabaseClient
@@ -696,7 +721,7 @@
 
     async function saveApiKeyFromSettings() {
         if (!currentUserId) {
-            showToast('ログイン後にAPIキーを保存してください', true);
+            showFeedback('ログイン後にAPIキーを保存してください', true);
             return;
         }
         const value = document.getElementById('settings-api-key-input').value.trim();
@@ -720,12 +745,14 @@
             status.textContent = 'APIキーの保存に失敗しました。';
             status.classList.remove('text-green-400');
             status.classList.add('text-red-400');
+            showFeedback('APIキーの保存に失敗しました。', true);
         } else {
             currentApiKeyRecordId = data.id;
             setApiKeyInputs(value);
             status.textContent = 'APIキーを保存しました。';
             status.classList.remove('text-red-400');
             status.classList.add('text-green-400');
+            showFeedback('APIキーを保存しました。');
         }
 
         status.classList.remove('opacity-0');
@@ -756,7 +783,7 @@
         const errorBox = document.getElementById('auth-error');
         errorBox.textContent = message;
         errorBox.classList.remove('hidden');
-        showToast(message, true);
+        showFeedback(message, true);
     }
 
     function formatAuthError(message) {
@@ -985,7 +1012,7 @@
 
     function openHistory() {
         if (!currentUserId) {
-            showToast('ログイン後に履歴を確認できます', true);
+            showFeedback('ログイン後に履歴を確認できます', true);
             return;
         }
         switchView('history');
@@ -1120,7 +1147,7 @@
         if (currentGenMode === 'free') {
             finalPrompt = document.getElementById('prompt-input').value;
         } else {
-            if (!selectedTemplateId) return showToast("テンプレートを選択してください", true);
+            if (!selectedTemplateId) return showFeedback("テンプレートを選択してください", true);
             const tmpl = templates.find(t => t.id === selectedTemplateId);
             finalPrompt = tmpl.prompt;
             tmpl.fields.forEach(f => {
@@ -1129,7 +1156,7 @@
             });
         }
 
-        if (!finalPrompt.trim()) return showToast("プロンプトを入力してください", true);
+        if (!finalPrompt.trim()) return showFeedback("プロンプトを入力してください", true);
 
         // 3. Demo check
         let isDemoMode = false;
@@ -1296,7 +1323,7 @@
 
     async function saveTemplate() {
         if (!currentUserId) {
-            showToast('テンプレートの保存にはログインが必要です', true);
+            showFeedback('テンプレートの保存にはログインが必要です', true);
             return;
         }
         const idInput = document.getElementById('editor-id');
@@ -1305,12 +1332,12 @@
         const ar = document.getElementById('editor-aspect-ratio').value;
 
         if (!name) {
-            showToast('テンプレート名を入力してください。', true);
+            showFeedback('テンプレート名を入力してください。', true);
             return;
         }
 
         if (!prompt) {
-            showToast('プロンプト本文を入力してください。', true);
+            showFeedback('プロンプト本文を入力してください。', true);
             return;
         }
 
@@ -1340,7 +1367,7 @@
         const { error } = await supabaseClient.from('templates').upsert(payload);
         if (error) {
             console.warn('テンプレートの保存に失敗しました', error);
-            showToast('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
+            showFeedback('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
             return;
         }
 
@@ -1354,12 +1381,12 @@
         renderSidebar();
         switchView('dashboard');
         selectTemplateForGen(newTemplate.id);
-        showToast('テンプレートを保存しました');
+        showFeedback('テンプレートを保存しました');
     }
 
     async function deleteTemplate(id) {
         if(!confirm("本当に削除しますか？")) return;
-        if (!currentUserId) return showToast('ログイン後に削除してください', true);
+        if (!currentUserId) return showFeedback('ログイン後に削除してください', true);
 
         const { error } = await supabaseClient
             .from('templates')
@@ -1369,7 +1396,7 @@
 
         if (error) {
             console.warn('テンプレートの削除に失敗しました', error);
-            showToast('テンプレートの削除に失敗しました', true);
+            showFeedback('テンプレートの削除に失敗しました', true);
             return;
         }
 
