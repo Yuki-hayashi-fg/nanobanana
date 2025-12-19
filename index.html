@@ -182,6 +182,23 @@
                     <div class="flex-1 w-full">
                         <div id="input-free" class="relative group">
                             <textarea id="prompt-input" class="w-full bg-surface-dark border border-border-dark rounded-xl p-4 text-white placeholder-[#5a4f69] focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none h-32 transition-all font-body leading-relaxed" placeholder="どのような画像を生成しますか？..."></textarea>
+                            <div class="mt-3 space-y-2">
+                                <div class="flex items-center gap-2 text-xs text-[#ab9db9] font-semibold uppercase">
+                                    <span class="material-symbols-outlined text-sm">palette</span>
+                                    <span>スタイル参照画像 (任意)</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label for="style-image-input" class="inline-flex items-center gap-2 px-3 py-2 border border-border-dark rounded-lg bg-black/30 text-xs text-white cursor-pointer hover:border-primary/70 hover:bg-white/5 transition-colors">
+                                        <span class="material-symbols-outlined text-base">upload</span>
+                                        <span>画像を選択</span>
+                                    </label>
+                                    <input type="file" id="style-image-input" accept="image/*" class="hidden" />
+                                    <div id="style-image-preview" class="hidden flex items-center gap-2 text-xs text-[#ab9db9]">
+                                        <img id="style-image-preview-img" alt="Style preview" class="w-14 h-14 object-cover rounded-lg border border-border-dark bg-black/30" />
+                                        <button type="button" id="style-image-clear" class="text-[11px] px-2 py-1 rounded-md border border-border-dark bg-white/5 hover:bg-white/10 text-white transition-colors">クリア</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div id="input-template" class="hidden flex flex-col gap-2 h-32">
@@ -546,6 +563,7 @@
     let pendingDeleteTemplateId = null;
     let imageHistory = [];
     const imageMeta = new Map();
+    let styleReferenceImage = null;
 
     // --- Settings Helpers ---
     function encryptApiKey(value) {
@@ -670,6 +688,66 @@
             img.onerror = () => resolve('1:1');
             img.src = url;
         });
+    }
+
+    // --- Style Reference Helpers ---
+    function updateStylePreview(previewUrl) {
+        const container = document.getElementById('style-image-preview');
+        const img = document.getElementById('style-image-preview-img');
+        if (!container || !img) return;
+
+        if (previewUrl) {
+            img.src = previewUrl;
+            container.classList.remove('hidden');
+        } else {
+            img.src = '';
+            container.classList.add('hidden');
+        }
+    }
+
+    function clearStyleReferenceImage() {
+        const input = document.getElementById('style-image-input');
+        if (input) input.value = '';
+        styleReferenceImage = null;
+        updateStylePreview('');
+    }
+
+    function handleStyleImageChange(event) {
+        const file = event?.target?.files?.[0];
+        if (!file) {
+            clearStyleReferenceImage();
+            return;
+        }
+
+        if (!file.type.startsWith('image/')) {
+            showFeedback('画像ファイルを選択してください', true);
+            clearStyleReferenceImage();
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result;
+            if (typeof result !== 'string') {
+                showFeedback('画像の読み込みに失敗しました', true);
+                clearStyleReferenceImage();
+                return;
+            }
+
+            const base64 = result.split(',')[1] || '';
+            styleReferenceImage = {
+                data: base64,
+                mimeType: file.type || 'image/png'
+            };
+            updateStylePreview(result);
+        };
+
+        reader.onerror = () => {
+            showFeedback('画像の読み込みに失敗しました', true);
+            clearStyleReferenceImage();
+        };
+
+        reader.readAsDataURL(file);
     }
 
     async function loadApiKeyFromDB(userId) {
@@ -1029,6 +1107,10 @@
     window.onload = function() {
         initModelSelect();
         setupAuthListeners();
+        const styleInput = document.getElementById('style-image-input');
+        if (styleInput) styleInput.addEventListener('change', handleStyleImageChange);
+        const clearBtn = document.getElementById('style-image-clear');
+        if (clearBtn) clearBtn.addEventListener('click', clearStyleReferenceImage);
     };
 
     function initModelSelect() {
@@ -1305,6 +1387,7 @@
         const count = parseInt(document.getElementById('gen-count').value) || 1;
         const snapshotModelKey = activeModelKey;
         const activeModel = MODELS[snapshotModelKey];
+        const styleReference = styleReferenceImage ? { ...styleReferenceImage } : null;
 
         if (!activeModel) {
             return showFeedback("モデルを選択してください", true);
@@ -1337,7 +1420,7 @@
         addMessage(finalPrompt, 'user');
         const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
-        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
+        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference };
         enqueueTask({ type: 'generate', request, placeholderId });
 
         const promptInput = document.getElementById('prompt-input');
@@ -1346,7 +1429,7 @@
     }
 
     async function runGenerationTask({ request, placeholderId }) {
-        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode } = request;
+        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference } = request;
         const activeModel = MODELS[snapshotModelKey];
         if (!activeModel) {
             showFeedback("モデルを選択してください", true);
@@ -1357,6 +1440,10 @@
 
         const results = new Array(count);
         const errors = [];
+
+        const promptForRequest = styleReference
+            ? `${finalPrompt} Apply the artistic style, color palette, and texture of the provided reference image.`
+            : finalPrompt;
 
         const promises = new Array(count).fill(null).map(async (_unused, idx) => {
             try {
@@ -1382,8 +1469,21 @@
                     if (activeModel.type === "gemini") {
                         // Gemini Native
                         url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`;
+                        const parts = [
+                            { "text": promptForRequest }
+                        ];
+
+                        if (styleReference) {
+                            parts.push({
+                                inlineData: {
+                                    mimeType: styleReference.mimeType || 'image/png',
+                                    data: styleReference.data
+                                }
+                            });
+                        }
+
                         requestBody = {
-                            "contents": [ { "parts": [ { "text": finalPrompt } ] } ],
+                            "contents": [ { "parts": parts } ],
                             "generationConfig": {
                                 "responseModalities": ["IMAGE"],
                                 "imageConfig": { "aspectRatio": aspectRatio, "imageSize": "1024" }
@@ -1393,7 +1493,7 @@
                         // Imagen (Legacy)
                         url = `${activeModel.endpointBase}?key=${apiKey}`;
                         requestBody = {
-                            "instances": [ { "prompt": finalPrompt } ],
+                            "instances": [ { "prompt": promptForRequest } ],
                             "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
                         };
                     }
@@ -1436,7 +1536,7 @@
                     finalCost = activeModel.cost;
                 }
 
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: snapshotModelKey };
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: promptForRequest, modelKey: snapshotModelKey };
 
             } catch (e) {
                 const message = e?.message || '生成に失敗しました';
@@ -1461,7 +1561,7 @@
             setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey });
         });
 
-        await Promise.allSettled(validResults.map(res => saveImageHistory(finalPrompt, res.url)));
+        await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url)));
 
         renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
     }
