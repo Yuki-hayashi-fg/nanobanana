@@ -481,41 +481,12 @@
 
     const memoryStorage = new MemoryStorage();
 
-    /**
-     * Detect whether localStorage is available in the current execution context.
-     * Some hosting environments sandbox the document without the
-     * `allow-same-origin` flag, causing synchronous access to throw and break
-     * initialization. We gracefully fall back to an in-memory storage to keep
-     * the app functional (e.g. template CRUD).
-     */
-    function getSafeStorage() {
-        try {
-            const testKey = '__nb_storage_test__';
-            window.localStorage.setItem(testKey, 'ok');
-            window.localStorage.removeItem(testKey);
-            return window.localStorage;
-        } catch (error) {
-            console.warn('localStorage is unavailable; using in-memory storage.', error);
-            try {
-                Object.defineProperty(window, 'localStorage', {
-                    value: memoryStorage,
-                    configurable: true,
-                });
-            } catch (_) {
-                // If redefining fails, we still return the memory storage instance.
-            }
-            return memoryStorage;
-        }
-    }
-
-    const safeStorage = getSafeStorage();
-
     // --- Supabase Auth (Dummy Email) ---
     const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_GD30ke1zlBkHOAZcZ2Nccw_LWZjGXCj';
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
         auth: {
-            storage: safeStorage,
+            storage: memoryStorage,
             persistSession: false,
             autoRefreshToken: false,
             detectSessionInUrl: false,
