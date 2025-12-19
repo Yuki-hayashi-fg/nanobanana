@@ -1600,9 +1600,12 @@
         });
         const modalBtn = document.getElementById('modal-upscale-btn');
         const modalImage = document.getElementById('modal-image');
-        if (modalBtn && modalImage && modalImage.src === imageUrl) {
-            modalBtn.dataset.loading = isLoading ? '1' : '0';
-            updateUpscaleButtonState(modalBtn);
+        if (modalBtn) {
+            const modalTarget = modalBtn.dataset.imageUrl || modalImage?.src;
+            if (modalTarget === imageUrl || (!isLoading && modalBtn.dataset.loading === '1')) {
+                modalBtn.dataset.loading = isLoading ? '1' : '0';
+                updateUpscaleButtonState(modalBtn);
+            }
         }
     }
 
