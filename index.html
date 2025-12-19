@@ -1235,13 +1235,20 @@
         pill.classList.remove('hidden');
     }
 
+    let generationQueue = Promise.resolve();
+
     async function handleGenerate() {
         // 1. Prepare Params
         const apiKey = document.getElementById('settings-api-key-input').value;
         const aspectRatio = sanitizeAspectRatio(document.getElementById('gen-aspect-ratio').value);
         document.getElementById('gen-aspect-ratio').value = aspectRatio;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
-        const activeModel = MODELS[activeModelKey];
+        const snapshotModelKey = activeModelKey;
+        const activeModel = MODELS[snapshotModelKey];
+
+        if (!activeModel) {
+            return showFeedback("モデルを選択してください", true);
+        }
 
         // 2. Prepare Prompt
         let finalPrompt = "";
@@ -1266,9 +1273,26 @@
              if(!confirmDemo) return;
              isDemoMode = true;
         }
-        
+
         addMessage(finalPrompt, 'user');
-        
+
+        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
+
+        generationQueue = generationQueue
+            .then(() => runGenerationTask(request))
+            .catch(err => {
+                console.error(err);
+                showFeedback(`画像生成に失敗しました: ${err.message}`, true);
+            });
+    }
+
+    async function runGenerationTask({ apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode }) {
+        const activeModel = MODELS[snapshotModelKey];
+        if (!activeModel) {
+            showFeedback("モデルを選択してください", true);
+            return;
+        }
+
         // 4. Parallel Generation Loop
         const loadingIds = [];
         for(let i=0; i<count; i++) {
@@ -1354,8 +1378,8 @@
                     }
                     finalCost = activeModel.cost;
                 }
-                
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: activeModelKey };
+
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: snapshotModelKey };
                 removeLoading(loadId);
 
             } catch (e) {
