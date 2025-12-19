@@ -481,12 +481,26 @@
 
     const memoryStorage = new MemoryStorage();
 
+    function getSafeStorage() {
+        try {
+            const testKey = '__nb_storage_test__';
+            window.localStorage.setItem(testKey, '1');
+            window.localStorage.removeItem(testKey);
+            return window.localStorage;
+        } catch (error) {
+            console.warn('localStorage is not available, falling back to in-memory storage.', error);
+            return memoryStorage;
+        }
+    }
+
+    const safeStorage = getSafeStorage();
+
     // --- Supabase Auth (Dummy Email) ---
     const SUPABASE_URL = 'https://zzpgthmjnatjxbomtnar.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_GD30ke1zlBkHOAZcZ2Nccw_LWZjGXCj';
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
         auth: {
-            storage: memoryStorage,
+            storage: safeStorage,
             persistSession: false,
             autoRefreshToken: false,
             detectSessionInUrl: false,
