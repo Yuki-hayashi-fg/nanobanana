@@ -1249,7 +1249,36 @@
         pill.classList.remove('hidden');
     }
 
-    let generationQueue = Promise.resolve();
+    const requestQueue = [];
+    let activeGenerationCount = 0;
+    const MAX_CONCURRENT_GENERATIONS = 3;
+
+    function enqueueGenerationTask(task) {
+        requestQueue.push(task);
+        processQueue();
+    }
+
+    function processQueue() {
+        if (activeGenerationCount >= MAX_CONCURRENT_GENERATIONS) return;
+        if (requestQueue.length === 0) return;
+
+        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && requestQueue.length > 0) {
+            const nextTask = requestQueue.shift();
+            if (!nextTask) break;
+            activeGenerationCount++;
+            updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
+            runGenerationTask(nextTask)
+                .catch(err => {
+                    console.error(err);
+                    updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
+                    showFeedback(`画像生成に失敗しました: ${err.message}`, true);
+                })
+                .finally(() => {
+                    activeGenerationCount--;
+                    processQueue();
+                });
+        }
+    }
 
     async function handleGenerate() {
         // 1. Prepare Params
@@ -1289,33 +1318,29 @@
         }
 
         addMessage(finalPrompt, 'user');
+        const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
         const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
+        enqueueGenerationTask({ request, placeholderId });
 
-        generationQueue = generationQueue
-            .then(() => runGenerationTask(request))
-            .catch(err => {
-                console.error(err);
-                showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-            });
+        const promptInput = document.getElementById('prompt-input');
+        if (promptInput) promptInput.value = '';
+        document.querySelectorAll('[id^="gen-field-"]').forEach(input => { input.value = ''; });
     }
 
-    async function runGenerationTask({ apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode }) {
+    async function runGenerationTask({ request, placeholderId }) {
+        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode } = request;
         const activeModel = MODELS[snapshotModelKey];
         if (!activeModel) {
             showFeedback("モデルを選択してください", true);
             return;
         }
 
-        // 4. Parallel Generation Loop
-        const loadingIds = [];
-        for(let i=0; i<count; i++) {
-            loadingIds.push(addLoading());
-        }
+        updatePlaceholderStatus(placeholderId, '🤖 生成中...');
 
         const results = new Array(count);
 
-        const promises = loadingIds.map(async (loadId, idx) => {
+        const promises = new Array(count).fill(null).map(async (_unused, idx) => {
             try {
                 let imageUrl = "";
                 let finalCost = "0.00";
@@ -1394,17 +1419,10 @@
                 }
 
                 results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: snapshotModelKey };
-                removeLoading(loadId);
 
             } catch (e) {
                 console.error(e);
-                removeLoading(loadId);
-                const container = document.getElementById('chat-container');
-                const errDiv = document.createElement('div');
-                errDiv.className = "text-red-400 bg-red-900/20 p-3 rounded mb-4 text-xs max-w-[80%]";
-                errDiv.innerText = `Error: ${e.message}`;
-                container.appendChild(errDiv);
-                container.scrollTop = container.scrollHeight;
+                updatePlaceholderWithError(placeholderId, e?.message || '生成に失敗しました');
             }
         });
 
@@ -1420,12 +1438,7 @@
 
         await Promise.allSettled(validResults.map(res => saveImageHistory(finalPrompt, res.url)));
 
-        if (validResults.length > 1) {
-            addAIResultGroup(validResults, activeModel.name);
-        } else {
-            const single = validResults[0];
-            addAIResult(single.url, single.modelName, single.ratio);
-        }
+        renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
     }
 
     // --- EDITOR LOGIC ---
@@ -1593,28 +1606,114 @@
         container.scrollTop = container.scrollHeight;
     }
 
-    function addLoading() {
+    function addGenerationPlaceholder(statusText = '🤖 生成中...（待機中）') {
         const container = document.getElementById('chat-container');
-        const id = 'loading-' + Date.now() + Math.random();
-        const div = document.createElement('div');
-        div.id = id;
-        div.className = "flex items-start gap-3 justify-start max-w-[80%] fade-in mb-4";
-        div.innerHTML = `
+        const id = 'placeholder-' + Date.now() + Math.random();
+        const wrapper = document.createElement('div');
+        wrapper.id = id;
+        wrapper.className = "flex items-start gap-3 justify-start max-w-[80%] fade-in mb-4";
+        wrapper.innerHTML = `
             <div class="size-8 flex items-center justify-center bg-primary rounded-full shrink-0 animate-pulse">
                 <span class="material-symbols-outlined text-white text-sm">smart_toy</span>
             </div>
-            <div class="bg-surface-dark border border-border-dark rounded-2xl rounded-tl-sm p-4 shadow-xl">
-                 <div class="flex items-center gap-2 text-[#ab9db9] text-sm">Thinking...</div>
+            <div class="flex-1 bg-surface-dark border border-border-dark rounded-2xl rounded-tl-sm p-4 shadow-xl placeholder-content" id="${id}-content">
+                 <div class="flex items-center gap-2 text-[#ab9db9] text-sm" id="${id}-status">${statusText}</div>
             </div>
         `;
-        container.appendChild(div);
+        container.appendChild(wrapper);
         container.scrollTop = container.scrollHeight;
         return id;
     }
 
-    function removeLoading(id) {
-        const el = document.getElementById(id);
-        if(el) el.remove();
+    function updatePlaceholderStatus(id, text) {
+        const statusEl = document.getElementById(`${id}-status`);
+        if (statusEl) statusEl.textContent = text;
+    }
+
+    function updatePlaceholderWithError(id, text) {
+        const content = document.getElementById(`${id}-content`);
+        if (!content) return;
+        content.innerHTML = `<div class="text-red-400 bg-red-900/20 p-3 rounded text-xs">Error: ${text}</div>`;
+    }
+
+    function renderResultsInPlaceholder(id, results, modelName) {
+        const content = document.getElementById(`${id}-content`);
+        if (!content) return;
+        content.innerHTML = '';
+
+        if (results.length > 1) {
+            const card = document.createElement('div');
+            card.className = "bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl flex-1";
+
+            const grid = document.createElement('div');
+            grid.className = "grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-black/30";
+
+            results.forEach((res, index) => {
+                const item = document.createElement('div');
+                item.className = "relative cursor-pointer overflow-hidden bg-black/50 rounded-xl border border-border-dark";
+
+                const img = document.createElement('img');
+                img.src = res.url;
+                img.className = "w-full h-auto max-h-[320px] object-contain";
+                img.onclick = () => openModal(res.url, res.prompt);
+
+                const badge = document.createElement('div');
+                badge.className = "absolute top-2 left-2 bg-primary text-[10px] px-2 py-1 rounded-full font-bold";
+                badge.innerText = `#${index + 1} ${res.ratio}`;
+
+                const dl = document.createElement('a');
+                dl.href = res.url;
+                dl.download = `generated-${index + 1}.png`;
+                dl.className = "absolute top-2 right-2 bg-white/15 hover:bg-primary text-white p-2 rounded-full backdrop-blur border border-white/10 transition-colors";
+                dl.innerHTML = `<span class="material-symbols-outlined text-sm">download</span>`;
+
+                const upscale = document.createElement('button');
+                upscale.className = "upscale-btn absolute bottom-2 left-2 text-[11px] font-bold px-3 py-1.5 rounded-full border border-white/10 bg-white/15 hover:bg-primary text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed";
+                upscale.dataset.imageUrl = res.url;
+                upscale.textContent = '4Kにする';
+                upscale.onclick = (event) => { event.stopPropagation(); regenerate4k(res.url); };
+
+                item.appendChild(img);
+                item.appendChild(badge);
+                item.appendChild(dl);
+                item.appendChild(upscale);
+                grid.appendChild(item);
+                updateUpscaleButtonState(upscale);
+            });
+
+            const footer = document.createElement('div');
+            footer.className = "px-4 py-3 bg-[#1a1421] flex items-center justify-between text-sm";
+            footer.innerHTML = `<div class="flex flex-col"><span class="text-white font-bold">${modelName}</span><span class="text-[10px] text-[#ab9db9]">${results.length} images</span></div>`;
+
+            card.appendChild(grid);
+            card.appendChild(footer);
+            content.appendChild(card);
+        } else {
+            const res = results[0];
+            const card = document.createElement('div');
+            card.className = "bg-surface-dark rounded-2xl border border-white/5 overflow-hidden shadow-xl";
+            card.innerHTML = `
+                <div class="relative cursor-pointer overflow-hidden bg-black/50" onclick="openModal('${res.url}', '${res.prompt?.replace(/'/g, "&#39;") || ''}')">
+                    <img src="${res.url}" class="w-full h-auto max-h-[400px] object-contain">
+                </div>
+                <div class="p-3 flex justify-between items-center bg-[#1a1421]">
+                     <div class="flex flex-col">
+                        <span class="text-xs font-bold text-white">${modelName}</span>
+                        <span class="text-[10px] text-[#ab9db9]">${res.ratio}</span>
+                     </div>
+                     <div class="flex items-center gap-2">
+                        <button class="upscale-btn text-white text-[11px] font-bold px-3 py-1.5 rounded-full border border-white/10 bg-white/10 hover:bg-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed" data-image-url="${res.url}" onclick="event.stopPropagation(); regenerate4k('${res.url}');">4Kにする</button>
+                        <a href="${res.url}" download="generated.png" class="text-white hover:text-primary p-2 rounded-full hover:bg-white/10 transition-colors"><span class="material-symbols-outlined text-sm">download</span></a>
+                     </div>
+                </div>
+            `;
+            content.appendChild(card);
+            const upscaleBtn = content.querySelector('.upscale-btn');
+            updateUpscaleButtonState(upscaleBtn);
+        }
+
+        const chatContainer = document.getElementById('chat-container');
+        if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
     function updateUpscaleButtonState(button) {
