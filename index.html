@@ -367,6 +367,10 @@
                             <p class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider">生成履歴</p>
                             <h3 class="text-lg font-display font-bold text-white">最近の画像</h3>
                         </div>
+                        <button id="history-delete-all" onclick="confirmDeleteAllHistory()" class="flex items-center gap-2 px-3 py-2 rounded-lg border border-border-dark text-sm text-[#fca5a5] hover:text-white hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            <span class="material-symbols-outlined text-base">delete_sweep</span>
+                            <span>すべて削除</span>
+                        </button>
                     </div>
                     <div id="history-empty" class="text-sm text-[#ab9db9] bg-black/30 border border-border-dark rounded-xl p-4 text-center">生成履歴はまだありません。画像を生成するとここに保存されます。</div>
                     <div id="history-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
@@ -704,6 +708,14 @@
         const section = document.getElementById('history-section');
         const grid = document.getElementById('history-grid');
         const empty = document.getElementById('history-empty');
+        const deleteAllBtn = document.getElementById('history-delete-all');
+        const setDeleteAllDisabled = (disabled) => {
+            if (!deleteAllBtn) return;
+            deleteAllBtn.disabled = disabled;
+            deleteAllBtn.classList.toggle('opacity-50', disabled);
+            deleteAllBtn.classList.toggle('cursor-not-allowed', disabled);
+        };
+
         if (!section || !grid || !empty) return;
 
         if (!currentUserId) {
@@ -711,6 +723,7 @@
             imageHistory = [];
             grid.innerHTML = '';
             empty.classList.remove('hidden');
+            setDeleteAllDisabled(true);
             return;
         }
 
@@ -719,10 +732,12 @@
 
         if (!imageHistory || imageHistory.length === 0) {
             empty.classList.remove('hidden');
+            setDeleteAllDisabled(true);
             return;
         }
 
         empty.classList.add('hidden');
+        setDeleteAllDisabled(false);
 
         imageHistory.forEach(entry => {
             const card = document.createElement('div');
@@ -730,6 +745,19 @@
 
             const imgWrap = document.createElement('div');
             imgWrap.className = "relative bg-black/40 cursor-pointer";
+
+            const actionBar = document.createElement('div');
+            actionBar.className = "absolute top-2 right-2 flex gap-1";
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = "p-2 rounded-full bg-black/60 hover:bg-red-500/80 text-white border border-white/10 transition-colors";
+            deleteBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
+            deleteBtn.onclick = (event) => {
+                event.stopPropagation();
+                confirmDeleteHistory(entry.id);
+            };
+
+            actionBar.appendChild(deleteBtn);
 
             const img = document.createElement('img');
             img.src = entry.image_url;
@@ -752,6 +780,7 @@
 
             imgWrap.appendChild(img);
             imgWrap.appendChild(expired);
+            imgWrap.appendChild(actionBar);
 
             const body = document.createElement('div');
             body.className = "p-4 space-y-2";
@@ -818,6 +847,68 @@
             imageHistory.unshift(data);
             renderHistory();
         }
+    }
+
+    function confirmDeleteHistory(id) {
+        if (!id) return;
+        const confirmed = confirm('この画像を削除しますか？');
+        if (!confirmed) return;
+        deleteHistoryEntry(id);
+    }
+
+    async function deleteHistoryEntry(id) {
+        if (!currentUserId || !id) {
+            showFeedback('ログイン後に履歴を削除できます。', true);
+            return;
+        }
+
+        const { error } = await supabaseClient
+            .from('image_history')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', currentUserId);
+
+        if (error) {
+            console.warn('履歴の削除に失敗しました', error);
+            showFeedback('履歴の削除に失敗しました。', true);
+            return;
+        }
+
+        imageHistory = imageHistory.filter(entry => entry.id !== id);
+        renderHistory();
+        showFeedback('履歴を削除しました。');
+    }
+
+    function confirmDeleteAllHistory() {
+        if (!currentUserId) {
+            showFeedback('ログイン後に履歴を管理できます。', true);
+            return;
+        }
+        if (!imageHistory || imageHistory.length === 0) return;
+
+        const confirmed = confirm('履歴をすべて削除しますか？この操作は取り消せません。');
+        if (!confirmed) return;
+
+        deleteAllHistory();
+    }
+
+    async function deleteAllHistory() {
+        if (!currentUserId) return;
+
+        const { error } = await supabaseClient
+            .from('image_history')
+            .delete()
+            .eq('user_id', currentUserId);
+
+        if (error) {
+            console.warn('履歴の一括削除に失敗しました', error);
+            showFeedback('履歴の削除に失敗しました。', true);
+            return;
+        }
+
+        imageHistory = [];
+        renderHistory();
+        showFeedback('履歴をすべて削除しました。');
     }
 
     function openSettingsPanel() {
