@@ -1364,9 +1364,15 @@
                         processQueue();
                     });
             } else if (nextTask.type === 'upscale_4k') {
+                if (nextTask.placeholderId) {
+                    updatePlaceholderStatus(nextTask.placeholderId, '🤖 4K生成中...');
+                }
                 runUpscale4kTask(nextTask)
                     .catch(err => {
                         console.error(err);
+                        if (nextTask.placeholderId) {
+                            updatePlaceholderWithError(nextTask.placeholderId, err?.message || '4K生成に失敗しました');
+                        }
                         showFeedback(`4K生成に失敗しました: ${err.message}`, true);
                     })
                     .finally(() => {
@@ -1927,6 +1933,8 @@
 
         setUpscaleLoading(imageUrl, true);
 
+        const placeholderId = addGenerationPlaceholder('🤖 4K生成中...（待機中）');
+
         enqueueTask({
             type: 'upscale_4k',
             imageUrl,
@@ -1934,12 +1942,13 @@
             apiKey,
             modelKey: meta.modelKey,
             prompt: meta.prompt,
-            ratio: meta.ratio
+            ratio: meta.ratio,
+            placeholderId,
         });
     }
 
     async function runUpscale4kTask(task) {
-        const { imageUrl, reopenModal, apiKey } = task;
+        const { imageUrl, reopenModal, apiKey, placeholderId } = task;
         const meta = imageMeta.get(imageUrl) || {};
         const prompt = task.prompt || meta.prompt;
         const modelKey = task.modelKey || meta.modelKey;
@@ -1988,13 +1997,24 @@
             const newUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
             setImageMeta(newUrl, { prompt, ratio, modelKey });
 
-            addAIResult(newUrl, model.name, `${ratio} / 4K`);
+            const displayRatio = `${ratio} / 4K`;
+            if (placeholderId) {
+                renderResultsInPlaceholder(placeholderId, [{ url: newUrl, prompt, ratio: displayRatio }], model.name);
+            } else {
+                addAIResult(newUrl, model.name, displayRatio);
+            }
+
             await saveImageHistory(prompt, newUrl);
             showFeedback('4K画像を生成しました');
 
             if (reopenModal) {
                 openModal(newUrl, prompt);
             }
+        } catch (err) {
+            if (placeholderId) {
+                updatePlaceholderWithError(placeholderId, err?.message || '4K生成に失敗しました');
+            }
+            throw err;
         } finally {
             setUpscaleLoading(imageUrl, false);
         }
