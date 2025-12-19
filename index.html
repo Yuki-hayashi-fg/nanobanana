@@ -533,6 +533,9 @@
     let imageHistory = [];
     const imageMeta = new Map();
 
+    const generationQueue = [];
+    let isProcessingGeneration = false;
+
     // --- Settings Helpers ---
     function encryptApiKey(value) {
         return CryptoJS.AES.encrypt(value, SECRET_PHRASE).toString();
@@ -1241,7 +1244,6 @@
         const aspectRatio = sanitizeAspectRatio(document.getElementById('gen-aspect-ratio').value);
         document.getElementById('gen-aspect-ratio').value = aspectRatio;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
-        const activeModel = MODELS[activeModelKey];
 
         // 2. Prepare Prompt
         let finalPrompt = "";
@@ -1266,9 +1268,57 @@
              if(!confirmDemo) return;
              isDemoMode = true;
         }
-        
+
         addMessage(finalPrompt, 'user');
-        
+
+        const task = {
+            apiKey,
+            aspectRatio,
+            count,
+            finalPrompt,
+            isDemoMode,
+            modelKey: activeModelKey,
+        };
+
+        enqueueGenerationTask(task);
+    }
+
+    function enqueueGenerationTask(task) {
+        const willWait = isProcessingGeneration || generationQueue.length > 0;
+        generationQueue.push(task);
+        if (willWait) {
+            showFeedback('生成リクエストをキューに追加しました');
+        }
+        processGenerationQueue();
+    }
+
+    async function processGenerationQueue() {
+        if (isProcessingGeneration || generationQueue.length === 0) return;
+
+        const nextTask = generationQueue.shift();
+        isProcessingGeneration = true;
+
+        try {
+            await runGenerationTask(nextTask);
+        } finally {
+            isProcessingGeneration = false;
+            processGenerationQueue();
+        }
+    }
+
+    async function runGenerationTask(task) {
+        const apiKey = task.apiKey;
+        const aspectRatio = task.aspectRatio;
+        const count = task.count;
+        const finalPrompt = task.finalPrompt;
+        const isDemoMode = task.isDemoMode;
+        const modelKey = task.modelKey;
+        const activeModel = MODELS[modelKey] || MODELS[activeModelKey];
+        if (!activeModel) {
+            showFeedback('モデルの設定が見つかりませんでした', true);
+            return;
+        }
+
         // 4. Parallel Generation Loop
         const loadingIds = [];
         for(let i=0; i<count; i++) {
@@ -1355,7 +1405,7 @@
                     finalCost = activeModel.cost;
                 }
                 
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey: activeModelKey };
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: finalPrompt, modelKey };
                 removeLoading(loadId);
 
             } catch (e) {
