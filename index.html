@@ -1249,34 +1249,49 @@
         pill.classList.remove('hidden');
     }
 
-    const requestQueue = [];
+    const generationQueue = [];
     let activeGenerationCount = 0;
     const MAX_CONCURRENT_GENERATIONS = 3;
 
-    function enqueueGenerationTask(task) {
-        requestQueue.push(task);
+    function enqueueTask(task) {
+        generationQueue.push(task);
         processQueue();
     }
 
     function processQueue() {
         if (activeGenerationCount >= MAX_CONCURRENT_GENERATIONS) return;
-        if (requestQueue.length === 0) return;
+        if (generationQueue.length === 0) return;
 
-        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && requestQueue.length > 0) {
-            const nextTask = requestQueue.shift();
+        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && generationQueue.length > 0) {
+            const nextTask = generationQueue.shift();
             if (!nextTask) break;
             activeGenerationCount++;
-            updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
-            runGenerationTask(nextTask)
-                .catch(err => {
-                    console.error(err);
-                    updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
-                    showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-                })
-                .finally(() => {
-                    activeGenerationCount--;
-                    processQueue();
-                });
+
+            if (nextTask.type === 'generate') {
+                updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
+                runGenerationTask(nextTask)
+                    .catch(err => {
+                        console.error(err);
+                        updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
+                        showFeedback(`画像生成に失敗しました: ${err.message}`, true);
+                    })
+                    .finally(() => {
+                        activeGenerationCount--;
+                        processQueue();
+                    });
+            } else if (nextTask.type === 'upscale_4k') {
+                runUpscale4kTask(nextTask)
+                    .catch(err => {
+                        console.error(err);
+                        showFeedback(`4K生成に失敗しました: ${err.message}`, true);
+                    })
+                    .finally(() => {
+                        activeGenerationCount--;
+                        processQueue();
+                    });
+            } else {
+                activeGenerationCount--;
+            }
         }
     }
 
@@ -1321,7 +1336,7 @@
         const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
         const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
-        enqueueGenerationTask({ request, placeholderId });
+        enqueueTask({ type: 'generate', request, placeholderId });
 
         const promptInput = document.getElementById('prompt-input');
         if (promptInput) promptInput.value = '';
@@ -1786,13 +1801,40 @@
 
         setUpscaleLoading(imageUrl, true);
 
+        enqueueTask({
+            type: 'upscale_4k',
+            imageUrl,
+            reopenModal,
+            apiKey,
+            modelKey: meta.modelKey,
+            prompt: meta.prompt,
+            ratio: meta.ratio
+        });
+    }
+
+    async function runUpscale4kTask(task) {
+        const { imageUrl, reopenModal, apiKey } = task;
+        const meta = imageMeta.get(imageUrl) || {};
+        const prompt = task.prompt || meta.prompt;
+        const modelKey = task.modelKey || meta.modelKey;
+        const ratioBase = task.ratio || meta.ratio;
+        const model = modelKey ? MODELS[modelKey] : null;
+
+        if (!prompt) {
+            throw new Error('この画像のプロンプト情報が見つかりません。');
+        }
+
+        if (!model || model.type !== 'gemini') {
+            throw new Error('4K再生成はGemini画像モデルで生成された画像のみ対応しています。');
+        }
+
         try {
-            const ratio = sanitizeAspectRatio(meta.ratio || await deriveAspectRatio(imageUrl) || '1:1');
+            const ratio = sanitizeAspectRatio(ratioBase || await deriveAspectRatio(imageUrl) || '1:1');
             setImageMeta(imageUrl, { ratio });
 
             const inlineData = await imageToBase64(imageUrl);
             const requestBody = {
-                contents: [ { parts: [ { text: meta.prompt }, { inlineData } ] } ],
+                contents: [ { parts: [ { text: prompt }, { inlineData } ] } ],
                 generationConfig: {
                     responseModalities: ['IMAGE'],
                     imageConfig: { aspectRatio: ratio, imageSize: '4K' }
@@ -1818,18 +1860,15 @@
             }
 
             const newUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-            setImageMeta(newUrl, { prompt: meta.prompt, ratio, modelKey: meta.modelKey });
+            setImageMeta(newUrl, { prompt, ratio, modelKey });
 
             addAIResult(newUrl, model.name, `${ratio} / 4K`);
-            await saveImageHistory(meta.prompt, newUrl);
+            await saveImageHistory(prompt, newUrl);
             showFeedback('4K画像を生成しました');
 
             if (reopenModal) {
-                openModal(newUrl, meta.prompt);
+                openModal(newUrl, prompt);
             }
-        } catch (error) {
-            console.error(error);
-            showFeedback(`4K生成に失敗しました: ${error.message}`, true);
         } finally {
             setUpscaleLoading(imageUrl, false);
         }
