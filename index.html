@@ -1249,34 +1249,51 @@
         pill.classList.remove('hidden');
     }
 
-    const requestQueue = [];
+    const generationQueue = [];
     let activeGenerationCount = 0;
     const MAX_CONCURRENT_GENERATIONS = 3;
 
-    function enqueueGenerationTask(task) {
-        requestQueue.push(task);
+    function enqueueTask(task) {
+        generationQueue.push(task);
         processQueue();
     }
 
     function processQueue() {
         if (activeGenerationCount >= MAX_CONCURRENT_GENERATIONS) return;
-        if (requestQueue.length === 0) return;
+        if (generationQueue.length === 0) return;
 
-        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && requestQueue.length > 0) {
-            const nextTask = requestQueue.shift();
+        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && generationQueue.length > 0) {
+            const nextTask = generationQueue.shift();
             if (!nextTask) break;
             activeGenerationCount++;
-            updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
-            runGenerationTask(nextTask)
-                .catch(err => {
-                    console.error(err);
-                    updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
-                    showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-                })
-                .finally(() => {
-                    activeGenerationCount--;
-                    processQueue();
-                });
+
+            const finalizeTask = () => {
+                activeGenerationCount--;
+                processQueue();
+            };
+
+            if (nextTask.type === 'generate') {
+                updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
+                runGenerationTask(nextTask)
+                    .catch(err => {
+                        console.error(err);
+                        updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
+                        showFeedback(`画像生成に失敗しました: ${err.message}`, true);
+                    })
+                    .finally(finalizeTask);
+            } else if (nextTask.type === 'upscale_4k') {
+                setUpscaleLoading(nextTask.imageUrl, 'running');
+                runUpscale4kTask(nextTask)
+                    .catch(err => {
+                        console.error(err);
+                        showFeedback(`4K生成に失敗しました: ${err.message}`, true);
+                        setUpscaleLoading(nextTask.imageUrl, 'idle');
+                    })
+                    .finally(finalizeTask);
+            } else {
+                console.warn('Unknown task type:', nextTask.type);
+                finalizeTask();
+            }
         }
     }
 
@@ -1321,7 +1338,7 @@
         const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
         const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode };
-        enqueueGenerationTask({ request, placeholderId });
+        enqueueTask({ type: 'generate', request, placeholderId });
 
         const promptInput = document.getElementById('prompt-input');
         if (promptInput) promptInput.value = '';
@@ -1723,15 +1740,20 @@
         const meta = imageMeta.get(url);
         const model = meta?.modelKey ? MODELS[meta.modelKey] : null;
         const isGemini = model?.type === 'gemini';
-        const enabled = !!meta && isGemini && !!apiKey && button.dataset.loading !== '1';
+        const state = button.dataset.state || 'idle';
+        const enabled = state === 'idle' && !!meta && isGemini && !!apiKey;
         button.disabled = !enabled;
-        button.textContent = button.dataset.loading === '1' ? '4K生成中...' : '4Kにする';
+
+        let label = '4Kにする';
+        if (state === 'queued') label = '4K待機中...';
+        if (state === 'running') label = '4K生成中...';
+        button.textContent = label;
     }
 
-    function setUpscaleLoading(imageUrl, isLoading) {
+    function setUpscaleLoading(imageUrl, state = 'idle') {
         document.querySelectorAll('.upscale-btn').forEach(btn => {
             if (btn.dataset.imageUrl === imageUrl) {
-                btn.dataset.loading = isLoading ? '1' : '0';
+                btn.dataset.state = state;
                 updateUpscaleButtonState(btn);
             }
         });
@@ -1739,8 +1761,8 @@
         const modalImage = document.getElementById('modal-image');
         if (modalBtn) {
             const modalTarget = modalBtn.dataset.imageUrl || modalImage?.src;
-            if (modalTarget === imageUrl || (!isLoading && modalBtn.dataset.loading === '1')) {
-                modalBtn.dataset.loading = isLoading ? '1' : '0';
+            if (modalTarget === imageUrl || (state === 'idle' && modalBtn.dataset.state === 'running')) {
+                modalBtn.dataset.state = state;
                 updateUpscaleButtonState(modalBtn);
             }
         }
@@ -1784,7 +1806,24 @@
             return;
         }
 
-        setUpscaleLoading(imageUrl, true);
+        setUpscaleLoading(imageUrl, 'queued');
+
+        enqueueTask({
+            type: 'upscale_4k',
+            imageUrl,
+            meta: { prompt: meta.prompt, ratio: meta.ratio, modelKey: meta.modelKey },
+            apiKey,
+            reopenModal
+        });
+
+        showFeedback('4K生成をキューに追加しました');
+    }
+
+    async function runUpscale4kTask({ imageUrl, meta, apiKey, reopenModal = false }) {
+        const model = meta?.modelKey ? MODELS[meta.modelKey] : null;
+        if (!model || model.type !== 'gemini') {
+            throw new Error('Gemini画像モデルでのみ4K生成が可能です。');
+        }
 
         try {
             const ratio = sanitizeAspectRatio(meta.ratio || await deriveAspectRatio(imageUrl) || '1:1');
@@ -1827,11 +1866,8 @@
             if (reopenModal) {
                 openModal(newUrl, meta.prompt);
             }
-        } catch (error) {
-            console.error(error);
-            showFeedback(`4K生成に失敗しました: ${error.message}`, true);
         } finally {
-            setUpscaleLoading(imageUrl, false);
+            setUpscaleLoading(imageUrl, 'idle');
         }
     }
 
