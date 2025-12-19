@@ -495,6 +495,12 @@
         }
     };
 
+    const ALLOWED_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+    const ALLOWED_ASPECT_VALUES = ALLOWED_ASPECT_RATIOS.map(ratio => {
+        const [w, h] = ratio.split(':').map(Number);
+        return { ratio, value: w / h };
+    });
+
     // --- State ---
     let templates = [];
     const DEFAULT_TEMPLATES = [];
@@ -568,10 +574,47 @@
         showToast(message, isError);
     }
 
+    function getNearestAllowedAspectRatio(value, fallback = '1:1') {
+        if (!isFinite(value) || value <= 0) return fallback;
+        let nearest = fallback;
+        let smallestDiff = Infinity;
+
+        ALLOWED_ASPECT_VALUES.forEach(({ ratio, value: allowedValue }) => {
+            const diff = Math.abs(value - allowedValue);
+            if (diff < smallestDiff) {
+                smallestDiff = diff;
+                nearest = ratio;
+            }
+        });
+
+        return nearest;
+    }
+
+    function sanitizeAspectRatio(raw, fallback = '1:1') {
+        if (!raw) return fallback;
+
+        const normalized = String(raw).trim();
+        if (ALLOWED_ASPECT_RATIOS.includes(normalized)) return normalized;
+
+        if (normalized.includes(':')) {
+            const [w, h] = normalized.split(':').map(Number);
+            if (w > 0 && h > 0) return getNearestAllowedAspectRatio(w / h, fallback);
+        }
+
+        const numeric = Number(normalized);
+        if (!Number.isNaN(numeric) && numeric > 0) {
+            return getNearestAllowedAspectRatio(numeric, fallback);
+        }
+
+        return fallback;
+    }
+
     function setImageMeta(url, meta) {
         if (!url) return;
         const current = imageMeta.get(url) || {};
-        imageMeta.set(url, { ...current, ...meta });
+        const merged = { ...current, ...meta };
+        if (merged.ratio) merged.ratio = sanitizeAspectRatio(merged.ratio);
+        imageMeta.set(url, merged);
     }
 
     function simplifyRatio(width, height) {
@@ -585,7 +628,8 @@
         return new Promise((resolve) => {
             const img = new Image();
             img.onload = () => {
-                resolve(simplifyRatio(img.naturalWidth, img.naturalHeight) || '1:1');
+                const numericRatio = img.naturalWidth / img.naturalHeight;
+                resolve(getNearestAllowedAspectRatio(numericRatio));
             };
             img.onerror = () => resolve('1:1');
             img.src = url;
@@ -1011,7 +1055,7 @@
             }
 
             const prompt = parsedContent?.prompt || row.content || '';
-            const aspectRatio = parsedContent?.aspectRatio || '1:1';
+            const aspectRatio = sanitizeAspectRatio(parsedContent?.aspectRatio || '1:1');
             const fields = parsedContent?.fields || extractFieldsFromPrompt(prompt);
 
             return {
@@ -1124,7 +1168,7 @@
 
         setGenMode('template');
         const arSelect = document.getElementById('gen-aspect-ratio');
-        if (arSelect) arSelect.value = tmpl.aspectRatio;
+        if (arSelect) arSelect.value = sanitizeAspectRatio(tmpl.aspectRatio);
 
         const container = document.getElementById('template-form-container');
         container.innerHTML = '';
@@ -1172,7 +1216,8 @@
     async function handleGenerate() {
         // 1. Prepare Params
         const apiKey = document.getElementById('settings-api-key-input').value;
-        const aspectRatio = document.getElementById('gen-aspect-ratio').value;
+        const aspectRatio = sanitizeAspectRatio(document.getElementById('gen-aspect-ratio').value);
+        document.getElementById('gen-aspect-ratio').value = aspectRatio;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
         const activeModel = MODELS[activeModelKey];
 
@@ -1338,7 +1383,7 @@
             nameInput.value = tmpl.name;
             promptInput.value = tmpl.prompt;
             idInput.value = tmpl.id;
-            arSelect.value = tmpl.aspectRatio;
+            arSelect.value = sanitizeAspectRatio(tmpl.aspectRatio);
         } else {
             title.innerText = "テンプレート作成";
             nameInput.value = "";
@@ -1367,7 +1412,8 @@
         const idInput = document.getElementById('editor-id');
         const name = document.getElementById('editor-name').value.trim();
         const prompt = document.getElementById('editor-prompt').value.trim();
-        const ar = document.getElementById('editor-aspect-ratio').value;
+        const ar = sanitizeAspectRatio(document.getElementById('editor-aspect-ratio').value);
+        document.getElementById('editor-aspect-ratio').value = ar;
 
         if (!name) {
             showFeedback('テンプレート名を入力してください。', true);
@@ -1549,7 +1595,7 @@
         setUpscaleLoading(imageUrl, true);
 
         try {
-            const ratio = meta.ratio || await deriveAspectRatio(imageUrl) || '1:1';
+            const ratio = sanitizeAspectRatio(meta.ratio || await deriveAspectRatio(imageUrl) || '1:1');
             setImageMeta(imageUrl, { ratio });
 
             const inlineData = await imageToBase64(imageUrl);
