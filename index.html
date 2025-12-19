@@ -326,7 +326,7 @@
 
                     <div class="flex-1"></div>
                     <div class="sticky bottom-4 z-10">
-                        <button onclick="saveTemplate()" class="w-full bg-primary hover:bg-[#6b0fca] text-white font-bold py-4 px-6 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-3 transition-all transform active:scale-[0.98] group">
+                        <button id="save-template-button" onclick="saveTemplate()" class="w-full bg-primary hover:bg-[#6b0fca] text-white font-bold py-4 px-6 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-3 transition-all transform active:scale-[0.98] group">
                             <span class="material-symbols-outlined group-hover:animate-bounce">save</span>
                             <span class="tracking-wide">テンプレートを保存</span>
                         </button>
@@ -1062,6 +1062,27 @@
         return Array.from(fields);
     }
 
+    function mapTemplateRow(row) {
+        let parsedContent = null;
+        try {
+            parsedContent = JSON.parse(row.content);
+        } catch (_) {
+            parsedContent = null;
+        }
+
+        const prompt = parsedContent?.prompt || row.content || '';
+        const aspectRatio = sanitizeAspectRatio(parsedContent?.aspectRatio || '1:1');
+        const fields = parsedContent?.fields || extractFieldsFromPrompt(prompt);
+
+        return {
+            id: row.id,
+            name: row.title,
+            prompt,
+            aspectRatio,
+            fields,
+        };
+    }
+
     async function loadTemplates(userId) {
         if (!userId) {
             templates = DEFAULT_TEMPLATES;
@@ -1082,26 +1103,7 @@
             return;
         }
 
-        templates = (data || []).map(row => {
-            let parsedContent = null;
-            try {
-                parsedContent = JSON.parse(row.content);
-            } catch (_) {
-                parsedContent = null;
-            }
-
-            const prompt = parsedContent?.prompt || row.content || '';
-            const aspectRatio = sanitizeAspectRatio(parsedContent?.aspectRatio || '1:1');
-            const fields = parsedContent?.fields || extractFieldsFromPrompt(prompt);
-
-            return {
-                id: row.id,
-                name: row.title,
-                prompt,
-                aspectRatio,
-                fields,
-            };
-        });
+        templates = (data || []).map(mapTemplateRow);
 
         renderSidebar();
     }
@@ -1505,69 +1507,85 @@
             showFeedback('テンプレートの保存にはログインが必要です', true);
             return;
         }
-        const idInput = document.getElementById('editor-id');
-        const name = document.getElementById('editor-name').value.trim();
-        const prompt = document.getElementById('editor-prompt').value.trim();
-        const ar = sanitizeAspectRatio(document.getElementById('editor-aspect-ratio').value);
-        document.getElementById('editor-aspect-ratio').value = ar;
+        const saveBtn = document.getElementById('save-template-button');
+        if (saveBtn) saveBtn.disabled = true;
 
-        if (!name) {
-            showFeedback('テンプレート名を入力してください。', true);
-            return;
-        }
+        try {
+            const idInput = document.getElementById('editor-id');
+            const name = document.getElementById('editor-name').value.trim();
+            const prompt = document.getElementById('editor-prompt').value.trim();
+            const ar = sanitizeAspectRatio(document.getElementById('editor-aspect-ratio').value);
+            document.getElementById('editor-aspect-ratio').value = ar;
 
-        if (!prompt) {
-            showFeedback('プロンプト本文を入力してください。', true);
-            return;
-        }
+            if (!name) {
+                showFeedback('テンプレート名を入力してください。', true);
+                return;
+            }
 
-        const fields = new Set(extractFieldsFromPrompt(prompt));
+            if (!prompt) {
+                showFeedback('プロンプト本文を入力してください。', true);
+                return;
+            }
 
-        const existingId = idInput.value.trim();
-        const templateId = existingId || crypto.randomUUID();
+            const fields = new Set(extractFieldsFromPrompt(prompt));
 
-        const newTemplate = {
-            id: templateId,
-            name: name,
-            prompt: prompt,
-            aspectRatio: ar,
-            fields: Array.from(fields)
-        };
+            const existingId = idInput.value.trim();
+            const templateId = existingId || crypto.randomUUID();
 
-        const payload = {
-            title: name,
-            content: JSON.stringify({
-                prompt: prompt,
+            const payload = {
+                title: name,
+                content: JSON.stringify({
+                    prompt: prompt,
+                    aspectRatio: ar,
+                    fields: Array.from(fields),
+                }),
+                user_id: currentUserId,
+            };
+
+            let error = null;
+            let savedRow = null;
+            if (existingId) {
+                const response = await supabaseClient
+                    .from('templates')
+                    .update(payload)
+                    .eq('id', existingId)
+                    .eq('user_id', currentUserId)
+                    .select()
+                    .single();
+                error = response.error;
+                savedRow = response.data;
+            } else {
+                const insertPayload = { ...payload, id: templateId };
+                const response = await supabaseClient
+                    .from('templates')
+                    .insert([insertPayload])
+                    .select()
+                    .single();
+                error = response.error;
+                savedRow = response.data;
+            }
+            if (error) {
+                console.warn('テンプレートの保存に失敗しました', error);
+                showFeedback('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
+                return;
+            }
+
+            const latestTemplate = savedRow ? mapTemplateRow(savedRow) : {
+                id: templateId,
+                name,
+                prompt,
                 aspectRatio: ar,
                 fields: Array.from(fields),
-            }),
-            user_id: currentUserId,
-        };
+            };
 
-        let error = null;
-        if (existingId) {
-            ({ error } = await supabaseClient
-                .from('templates')
-                .update(payload)
-                .eq('id', existingId)
-                .eq('user_id', currentUserId));
-        } else {
-            const insertPayload = { ...payload, id: templateId };
-            ({ error } = await supabaseClient
-                .from('templates')
-                .insert([insertPayload]));
+            // DB 更新内容を確実に反映させるため、最新のテンプレートを再取得
+            await loadTemplates(currentUserId);
+            switchView('dashboard');
+            selectTemplateForGen(latestTemplate.id);
+            showFeedback('テンプレートを保存しました');
+        } finally {
+            if (saveBtn) saveBtn.disabled = false;
         }
-        if (error) {
-            console.warn('テンプレートの保存に失敗しました', error);
-            showFeedback('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
-            return;
-        }
-
-        // DB 更新内容を確実に反映させるため、最新のテンプレートを再取得
-        await loadTemplates(currentUserId);
-        switchView('dashboard');
-        selectTemplateForGen(newTemplate.id);
-        showFeedback('テンプレートを保存しました');
     }
 
     function openDeleteModal(id) {
