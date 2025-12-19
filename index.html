@@ -1364,21 +1364,17 @@
             })
         };
 
-        const { error } = await supabaseClient.from('templates').upsert(payload);
+        const { error } = await supabaseClient
+            .from('templates')
+            .upsert(payload, { onConflict: 'id,user_id' });
         if (error) {
             console.warn('テンプレートの保存に失敗しました', error);
             showFeedback('テンプレートの保存に失敗しました。時間をおいて再度お試しください。', true);
             return;
         }
 
-        const existingIndex = templates.findIndex(t => t.id === templateId);
-        if (existingIndex !== -1) {
-            templates[existingIndex] = newTemplate;
-        } else {
-            templates.push(newTemplate);
-        }
-
-        renderSidebar();
+        // DB 更新内容を確実に反映させるため、最新のテンプレートを再取得
+        await loadTemplates(currentUserId);
         switchView('dashboard');
         selectTemplateForGen(newTemplate.id);
         showFeedback('テンプレートを保存しました');
