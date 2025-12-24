@@ -375,7 +375,7 @@
                     <div class="text-xs uppercase text-[#ab9db9] font-bold tracking-wider flex items-center gap-2">
                         <span class="material-symbols-outlined text-sm">collections</span> ライブラリ
                     </div>
-                    <div class="text-[11px] text-[#ab9db9] bg-white/5 px-2 py-1 rounded-full border border-white/10">最大24件の履歴を表示</div>
+                    <div class="text-[11px] text-[#ab9db9] bg-white/5 px-2 py-1 rounded-full border border-white/10">最大500件の履歴を表示</div>
                 </div>
 
                 <div id="history-section" class="bg-surface-dark border border-border-dark rounded-2xl p-6 hidden shadow-lg shadow-black/20">
@@ -896,7 +896,7 @@
             .select('id, prompt, image_url, reference_image, created_at')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
-            .limit(24);
+            .limit(500);
 
         if (error) {
             console.warn('履歴の取得に失敗しました', error);
