@@ -247,7 +247,7 @@
 
                         </div>
 
-                        <button onclick="handleGenerate()" id="generate-btn" class="flex-1 py-3 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap min-h-[50px]">
+                        <button id="generate-btn" class="flex-1 py-3 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap min-h-[50px]">
                             <span class="material-symbols-outlined text-2xl">auto_awesome</span>
                             <span class="md:hidden lg:inline">Generate</span>
                         </button>
@@ -1125,14 +1125,24 @@
     }
 
     // --- INITIALIZATION ---
-    window.onload = function() {
+    document.addEventListener('DOMContentLoaded', () => {
         initModelSelect();
         setupAuthListeners();
+
         const styleInput = document.getElementById('style-image-input');
         if (styleInput) styleInput.addEventListener('change', handleStyleImageChange);
+
         const clearBtn = document.getElementById('style-image-clear');
         if (clearBtn) clearBtn.addEventListener('click', clearStyleReferenceImage);
-    };
+
+        const generateButton = document.getElementById('generate-btn');
+        if (generateButton) {
+            generateButton.addEventListener('click', (event) => {
+                event.preventDefault();
+                handleGenerate();
+            });
+        }
+    });
 
     function initModelSelect() {
         const select = document.getElementById('model-select');
@@ -1467,135 +1477,142 @@
         const results = new Array(count);
         const errors = [];
 
-        const promptForRequest = styleReference
-            ? `${finalPrompt} Use the reference image only for stylistic guidance such as line thickness, softness, brush texture, and color treatment. Do not copy its composition, subject arrangement, pose, or camera angle; follow the layout described in the text prompt instead.`
-            : finalPrompt;
+        const basePrompt = finalPrompt.trim();
+        const styleImageBase64 = styleReference?.data;
+        const styleMimeType = styleReference?.mimeType || 'image/png';
 
+        const buildGeminiRequestBody = (is4K = false) => {
+            const parts = [{ text: basePrompt }];
+            if (styleImageBase64) {
+                parts[0].text += " Apply the artistic style, color palette, and texture of the provided reference image.";
+                parts.push({
+                    inline_data: {
+                        mime_type: styleMimeType,
+                        data: styleImageBase64
+                    }
+                });
+            }
+
+            const imageConfig = { aspect_ratio: aspectRatio };
+            const imageSize = is4K
+                ? '4K'
+                : (activeModel.id === 'gemini-3-pro-image-preview' ? '1K' : undefined);
+            if (imageSize) {
+                imageConfig.image_size = imageSize;
+            }
+
+            return {
+                contents: [{ parts }],
+                generationConfig: {
+                    image_config: imageConfig
+                }
+            };
+        };
+
+        const promptForRequest = buildGeminiRequestBody().contents[0].parts[0].text;
         const referenceDataUrl = styleReference
-            ? `data:${styleReference.mimeType || 'image/png'};base64,${styleReference.data}`
+            ? `data:${styleMimeType};base64,${styleImageBase64}`
             : null;
 
-        const promises = new Array(count).fill(null).map(async (_unused, idx) => {
-            try {
-                let imageUrl = "";
-                let finalCost = "0.00";
+        try {
+            const promises = new Array(count).fill(null).map(async (_unused, idx) => {
+                try {
+                    let imageUrl = "";
+                    let finalCost = "0.00";
 
-                if (isDemoMode) {
-                    // DEMO MODE logic
-                    await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
-                    const seed = Math.floor(Math.random() * 10000);
-                    const [rw, rh] = aspectRatio.split(':').map(Number);
-                    const baseSize = 800;
-                    const w = Math.round(baseSize * (rw / Math.sqrt(rw * rh)));
-                    const h = Math.round(baseSize * (rh / Math.sqrt(rw * rh)));
-                    imageUrl = `https://picsum.photos/seed/${seed}/${w}/${h}`;
-                    finalCost = "0.00 (Demo)";
+                    if (isDemoMode) {
+                        await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+                        const seed = Math.floor(Math.random() * 10000);
+                        const [rw, rh] = aspectRatio.split(':').map(Number);
+                        const baseSize = 800;
+                        const w = Math.round(baseSize * (rw / Math.sqrt(rw * rh)));
+                        const h = Math.round(baseSize * (rh / Math.sqrt(rw * rh)));
+                        imageUrl = `https://picsum.photos/seed/${seed}/${w}/${h}`;
+                        finalCost = "0.00 (Demo)";
 
-                } else {
-                    // API Call logic (Restored from working code)
-                    let url = "";
-                    let requestBody = {};
+                    } else {
+                        let url = "";
+                        let requestBody = {};
 
-                    if (activeModel.type === "gemini") {
-                        // Gemini Native (Gemini Image Generation rules)
-                        url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`;
-                        const parts = [
-                            { text: promptForRequest }
-                        ];
-
-                        if (styleReference) {
-                            parts.push({
-                                inline_data: {
-                                    mime_type: styleReference.mimeType || 'image/png',
-                                    data: styleReference.data
-                                }
-                            });
+                        if (activeModel.type === "gemini") {
+                            url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`;
+                            requestBody = buildGeminiRequestBody(false);
+                        } else {
+                            url = `${activeModel.endpointBase}?key=${apiKey}`;
+                            requestBody = {
+                                "instances": [ { "prompt": promptForRequest } ],
+                                "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
+                            };
                         }
 
-                        const imageConfig = { aspect_ratio: aspectRatio };
-                        if (activeModel.id === 'gemini-3-pro-image-preview') {
-                            imageConfig.image_size = '1K';
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody)
+                        });
+
+                        if (!response.ok) {
+                            const errText = await response.text();
+                            throw new Error(`API Error ${response.status}: ${errText}`);
                         }
 
-                        requestBody = {
-                            contents: [ { role: 'user', parts } ],
-                            generation_config: {
-                                response_modalities: ['TEXT', 'IMAGE'],
-                                image_config: imageConfig
+                        const data = await response.json();
+
+                        if (activeModel.type === "gemini") {
+                            const parts = data.candidates?.[0]?.content?.parts;
+                            const imagePart = findInlineImage(parts);
+                            if (imagePart) {
+                                imageUrl = `data:${imagePart.mimeType};base64,${imagePart.data}`;
+                            } else {
+                                throw new Error("Image blocked or failed (No inline data)");
                             }
-                        };
-                    } else {
-                        // Imagen (Legacy)
-                        url = `${activeModel.endpointBase}?key=${apiKey}`;
-                        requestBody = {
-                            "instances": [ { "prompt": promptForRequest } ],
-                            "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
-                        };
-                    }
-
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(requestBody)
-                    });
-
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        throw new Error(`API Error ${response.status}: ${errText}`);
-                    }
-
-                    const data = await response.json();
-
-                    // Response Parsing
-                    if (activeModel.type === "gemini") {
-                        const parts = data.candidates?.[0]?.content?.parts;
-                        const imagePart = findInlineImage(parts);
-                        if (imagePart) {
-                            imageUrl = `data:${imagePart.mimeType};base64,${imagePart.data}`;
                         } else {
-                            throw new Error("Image blocked or failed (No inline data)");
+                            if (data.predictions && data.predictions[0]?.bytesBase64Encoded) {
+                                imageUrl = "data:image/png;base64," + data.predictions[0].bytesBase64Encoded;
+                            } else if (data.images && data.images[0]) {
+                                 imageUrl = data.images[0];
+                            } else {
+                                throw new Error("Unexpected Imagen response");
+                            }
                         }
-                    } else {
-                        // Imagen
-                        if (data.predictions && data.predictions[0]?.bytesBase64Encoded) {
-                            imageUrl = "data:image/png;base64," + data.predictions[0].bytesBase64Encoded;
-                        } else if (data.images && data.images[0]) {
-                             imageUrl = data.images[0];
-                        } else {
-                            throw new Error("Unexpected Imagen response");
-                        }
+                        finalCost = activeModel.cost;
                     }
-                    finalCost = activeModel.cost;
+
+                    results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: promptForRequest, modelKey: snapshotModelKey, referenceImage: referenceDataUrl };
+
+                } catch (e) {
+                    const message = e?.message || '生成に失敗しました';
+                    console.error(e);
+                    errors.push(message);
+                    updatePlaceholderWithError(placeholderId, message);
+                    showToast(`画像生成に失敗しました: ${message}`, true);
                 }
+            });
 
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: promptForRequest, modelKey: snapshotModelKey, referenceImage: referenceDataUrl };
+            await Promise.allSettled(promises);
 
-            } catch (e) {
-                const message = e?.message || '生成に失敗しました';
-                console.error(e);
-                errors.push(message);
-                updatePlaceholderWithError(placeholderId, message);
+            const validResults = results.filter(r => r && r.url);
+
+            if (validResults.length === 0) {
+                const joinedError = errors.filter(Boolean).join(' / ') || '生成に失敗しました';
+                updatePlaceholderWithError(placeholderId, joinedError);
+                showFeedback(`画像生成に失敗しました: ${joinedError}`, true);
+                return;
             }
-        });
 
-        await Promise.allSettled(promises);
+            validResults.forEach(res => {
+                setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey, referenceImage: res.referenceImage || null });
+            });
 
-        const validResults = results.filter(r => r && r.url);
+            await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url, res.referenceImage || null)));
 
-        if (validResults.length === 0) {
-            const joinedError = errors.filter(Boolean).join(' / ') || '生成に失敗しました';
-            updatePlaceholderWithError(placeholderId, joinedError);
-            showFeedback(`画像生成に失敗しました: ${joinedError}`, true);
-            return;
+            renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
+        } catch (err) {
+            const fallbackMessage = err?.message || '生成に失敗しました';
+            console.error(err);
+            updatePlaceholderWithError(placeholderId, fallbackMessage);
+            showToast(`画像生成に失敗しました: ${fallbackMessage}`, true);
         }
-
-        validResults.forEach(res => {
-            setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey, referenceImage: res.referenceImage || null });
-        });
-
-        await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url, res.referenceImage || null)));
-
-        renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
     }
 
     // --- EDITOR LOGIC ---
@@ -1996,9 +2013,11 @@
             const inlineData = await imageToBase64(imageUrl);
             const inlineDataPart = { data: inlineData.data, mime_type: inlineData.mimeType };
             const requestBody = {
-                contents: [ { role: 'user', parts: [ { text: prompt }, { inline_data: inlineDataPart } ] } ],
-                generation_config: {
-                    response_modalities: ['TEXT', 'IMAGE'],
+                contents: [{ parts: [
+                    { text: prompt },
+                    { inline_data: inlineDataPart }
+                ] }],
+                generationConfig: {
                     image_config: { aspect_ratio: ratio, image_size: '4K' }
                 }
             };
