@@ -1402,44 +1402,44 @@
         processQueue();
     }
 
-    async function processQueue() {
-        if (generationQueue.length === 0) return;
+    async function executeGenerationTask(nextTask) {
+        try {
+            if (nextTask.type === 'generate') {
+                updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
+                await runGenerationTask(nextTask);
+            } else if (nextTask.type === 'upscale_4k') {
+                if (nextTask.placeholderId) {
+                    updatePlaceholderStatus(nextTask.placeholderId, '🤖 4K生成中...');
+                }
+                await runUpscale4kTask(nextTask);
+            }
+        } catch (err) {
+            console.error(err);
+            const message = err?.message || '生成に失敗しました';
+            if (nextTask.placeholderId) {
+                updatePlaceholderWithError(nextTask.placeholderId, message);
+            }
+            if (nextTask.type === 'upscale_4k') {
+                showFeedback(`4K生成に失敗しました: ${message}`, true);
+            } else {
+                showFeedback(`画像生成に失敗しました: ${message}`, true);
+            }
+        } finally {
+            console.log('🏁 タスク終了');
+            activeGenerations = Math.max(0, activeGenerations - 1);
+            processQueue();
+        }
+    }
 
+    async function processQueue() {
         while (generationQueue.length > 0 && activeGenerations < MAX_CONCURRENT) {
             const nextTask = generationQueue.shift();
             if (!nextTask) continue;
 
-            console.log('🚀 生成タスク開始', nextTask);
             activeGenerations++;
+            console.log('🚀 生成タスク開始', nextTask, `アクティブ: ${activeGenerations}/${MAX_CONCURRENT}`);
 
-            (async () => {
-                try {
-                    if (nextTask.type === 'generate') {
-                        updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
-                        await runGenerationTask(nextTask);
-                    } else if (nextTask.type === 'upscale_4k') {
-                        if (nextTask.placeholderId) {
-                            updatePlaceholderStatus(nextTask.placeholderId, '🤖 4K生成中...');
-                        }
-                        await runUpscale4kTask(nextTask);
-                    }
-                } catch (err) {
-                    console.error(err);
-                    const message = err?.message || '生成に失敗しました';
-                    if (nextTask.placeholderId) {
-                        updatePlaceholderWithError(nextTask.placeholderId, message);
-                    }
-                    if (nextTask.type === 'upscale_4k') {
-                        showFeedback(`4K生成に失敗しました: ${message}`, true);
-                    } else {
-                        showFeedback(`画像生成に失敗しました: ${message}`, true);
-                    }
-                } finally {
-                    console.log('🏁 タスク終了');
-                    activeGenerations--;
-                    processQueue();
-                }
-            })();
+            executeGenerationTask(nextTask);
         }
     }
 
