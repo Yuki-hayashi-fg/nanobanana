@@ -712,6 +712,34 @@
         }
     }
 
+    function convertFileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            try {
+                console.log('画像の変換開始...');
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const result = reader.result;
+                    if (typeof result !== 'string') {
+                        return reject(new Error('画像の読み込みに失敗しました'));
+                    }
+
+                    const base64 = result.split(',')[1] || '';
+                    console.log('変換完了');
+                    resolve(base64);
+                };
+
+                reader.onerror = (error) => {
+                    console.error('画像変換中にエラー', error);
+                    reject(error || new Error('画像の読み込みに失敗しました'));
+                };
+
+                reader.readAsDataURL(file);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
     function clearStyleReferenceImage() {
         const input = document.getElementById('style-image-input');
         if (input) input.value = '';
@@ -719,7 +747,7 @@
         updateStylePreview('');
     }
 
-    function handleStyleImageChange(event) {
+    async function handleStyleImageChange(event) {
         const file = event?.target?.files?.[0];
         if (!file) {
             clearStyleReferenceImage();
@@ -732,29 +760,19 @@
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = () => {
-            const result = reader.result;
-            if (typeof result !== 'string') {
-                showFeedback('画像の読み込みに失敗しました', true);
-                clearStyleReferenceImage();
-                return;
-            }
-
-            const base64 = result.split(',')[1] || '';
+        try {
+            const base64 = await convertFileToBase64(file);
+            const mimeType = file.type || 'image/png';
             styleReferenceImage = {
                 data: base64,
-                mimeType: file.type || 'image/png'
+                mimeType
             };
-            updateStylePreview(result);
-        };
-
-        reader.onerror = () => {
+            const previewUrl = `data:${mimeType};base64,${base64}`;
+            updateStylePreview(previewUrl);
+        } catch (error) {
             showFeedback('画像の読み込みに失敗しました', true);
             clearStyleReferenceImage();
-        };
-
-        reader.readAsDataURL(file);
+        }
     }
 
     async function loadApiKeyFromDB(userId) {
@@ -1376,54 +1394,48 @@
     }
 
     const generationQueue = [];
-    let activeGenerationCount = 0;
-    const MAX_CONCURRENT_GENERATIONS = 3;
+    let isProcessing = false;
 
     function enqueueTask(task) {
         generationQueue.push(task);
         processQueue();
     }
 
-    function processQueue() {
-        if (activeGenerationCount >= MAX_CONCURRENT_GENERATIONS) return;
+    async function processQueue() {
+        if (isProcessing) return;
         if (generationQueue.length === 0) return;
 
-        while (activeGenerationCount < MAX_CONCURRENT_GENERATIONS && generationQueue.length > 0) {
-            const nextTask = generationQueue.shift();
-            if (!nextTask) break;
-            activeGenerationCount++;
+        const nextTask = generationQueue.shift();
+        if (!nextTask) return;
 
+        console.log('🚀 生成タスク開始', nextTask);
+        isProcessing = true;
+
+        try {
             if (nextTask.type === 'generate') {
                 updatePlaceholderStatus(nextTask.placeholderId, '🤖 生成中...');
-                runGenerationTask(nextTask)
-                    .catch(err => {
-                        console.error(err);
-                        updatePlaceholderWithError(nextTask.placeholderId, err?.message || '生成に失敗しました');
-                        showFeedback(`画像生成に失敗しました: ${err.message}`, true);
-                    })
-                    .finally(() => {
-                        activeGenerationCount--;
-                        processQueue();
-                    });
+                await runGenerationTask(nextTask);
             } else if (nextTask.type === 'upscale_4k') {
                 if (nextTask.placeholderId) {
                     updatePlaceholderStatus(nextTask.placeholderId, '🤖 4K生成中...');
                 }
-                runUpscale4kTask(nextTask)
-                    .catch(err => {
-                        console.error(err);
-                        if (nextTask.placeholderId) {
-                            updatePlaceholderWithError(nextTask.placeholderId, err?.message || '4K生成に失敗しました');
-                        }
-                        showFeedback(`4K生成に失敗しました: ${err.message}`, true);
-                    })
-                    .finally(() => {
-                        activeGenerationCount--;
-                        processQueue();
-                    });
-            } else {
-                activeGenerationCount--;
+                await runUpscale4kTask(nextTask);
             }
+        } catch (err) {
+            console.error(err);
+            const message = err?.message || '生成に失敗しました';
+            if (nextTask.placeholderId) {
+                updatePlaceholderWithError(nextTask.placeholderId, message);
+            }
+            if (nextTask.type === 'upscale_4k') {
+                showFeedback(`4K生成に失敗しました: ${message}`, true);
+            } else {
+                showFeedback(`画像生成に失敗しました: ${message}`, true);
+            }
+        } finally {
+            console.log('🏁 タスク終了');
+            isProcessing = false;
+            processQueue();
         }
     }
 
