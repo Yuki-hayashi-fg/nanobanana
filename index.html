@@ -452,6 +452,14 @@
             </div>
             <p id="modal-prompt" class="text-sm text-white leading-relaxed whitespace-pre-wrap"></p>
         </div>
+        <div id="modal-reference-container" class="bg-surface-dark border border-border-dark rounded-xl p-4 space-y-3 shadow-lg shadow-black/40 hidden">
+            <div class="text-xs font-bold text-[#ab9db9] uppercase tracking-wider flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">photo_library</span> 参照した画像
+            </div>
+            <div class="bg-black/30 border border-border-dark rounded-lg p-3 flex justify-center">
+                <img id="modal-reference-image" alt="Reference image" class="max-h-[260px] w-auto object-contain rounded-md">
+            </div>
+        </div>
     </div>
 </div>
 
@@ -692,6 +700,12 @@
     }
 
     // --- Style Reference Helpers ---
+    function buildDataUrlFromReference(reference) {
+        if (!reference?.data) return null;
+        const mime = reference.mimeType || 'image/png';
+        return `data:${mime};base64,${reference.data}`;
+    }
+
     function updateStylePreview(previewUrl) {
         const container = document.getElementById('style-image-preview');
         const img = document.getElementById('style-image-preview-img');
@@ -814,8 +828,10 @@
             img.src = entry.image_url;
             img.className = "w-full h-48 object-cover";
 
+            setImageMeta(entry.image_url, { prompt: entry.prompt, referenceImage: entry.reference_image || null });
+
             img.onload = () => {
-                setImageMeta(entry.image_url, { prompt: entry.prompt, ratio: simplifyRatio(img.naturalWidth, img.naturalHeight), modelKey: 'gemini-3-pro-image-preview' });
+                setImageMeta(entry.image_url, { prompt: entry.prompt, ratio: simplifyRatio(img.naturalWidth, img.naturalHeight), modelKey: 'gemini-3-pro-image-preview', referenceImage: entry.reference_image || null });
             };
 
             imgWrap.onclick = () => openModal(entry.image_url, entry.prompt);
@@ -858,7 +874,7 @@
         if (!userId) return;
         const { data, error } = await supabaseClient
             .from('image_history')
-            .select('id, prompt, image_url, created_at')
+            .select('id, prompt, image_url, reference_image, created_at')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .limit(24);
@@ -873,19 +889,20 @@
         renderHistory();
     }
 
-    async function saveImageHistory(prompt, imageUrl) {
+    async function saveImageHistory(prompt, imageUrl, referenceImageBase64 = null) {
         if (!currentUserId || !prompt || !imageUrl) return;
         const payload = {
             id: crypto.randomUUID(),
             user_id: currentUserId,
             prompt,
             image_url: imageUrl,
+            reference_image: referenceImageBase64 || null,
         };
 
         const { data, error } = await supabaseClient
             .from('image_history')
             .insert(payload)
-            .select('id, prompt, image_url, created_at')
+            .select('id, prompt, image_url, reference_image, created_at')
             .single();
 
         if (error) {
@@ -895,6 +912,7 @@
 
         if (data) {
             imageHistory.unshift(data);
+            setImageMeta(imageUrl, { referenceImage: referenceImageBase64 || null });
             renderHistory();
         }
     }
@@ -1408,6 +1426,7 @@
         const snapshotModelKey = activeModelKey;
         const activeModel = MODELS[snapshotModelKey];
         const styleReference = styleReferenceImage ? { ...styleReferenceImage } : null;
+        const referenceImageBase64 = styleReference ? buildDataUrlFromReference(styleReference) : null;
 
         if (!activeModel) {
             return showFeedback("モデルを選択してください", true);
@@ -1439,7 +1458,7 @@
         addMessage(finalPrompt, 'user');
         const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
-        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference };
+        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference, referenceImageBase64 };
         enqueueTask({ type: 'generate', request, placeholderId });
 
         const promptInput = document.getElementById('prompt-input');
@@ -1448,7 +1467,7 @@
     }
 
     async function runGenerationTask({ request, placeholderId }) {
-        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference } = request;
+        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference, referenceImageBase64 } = request;
         const activeModel = MODELS[snapshotModelKey];
         if (!activeModel) {
             showFeedback("モデルを選択してください", true);
@@ -1557,7 +1576,7 @@
                     finalCost = activeModel.cost;
                 }
 
-                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: promptForRequest, modelKey: snapshotModelKey };
+                results[idx] = { url: imageUrl, modelName: activeModel.name, ratio: aspectRatio, prompt: promptForRequest, modelKey: snapshotModelKey, referenceImage: referenceImageBase64 };
 
             } catch (e) {
                 const message = e?.message || '生成に失敗しました';
@@ -1579,10 +1598,10 @@
         }
 
         validResults.forEach(res => {
-            setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey });
+            setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey, referenceImage: res.referenceImage });
         });
 
-        await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url)));
+        await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url, res.referenceImage)));
 
         renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
     }
@@ -1969,6 +1988,7 @@
         const modelKey = task.modelKey || meta.modelKey;
         const ratioBase = task.ratio || meta.ratio;
         const model = modelKey ? MODELS[modelKey] : null;
+        const referenceImage = meta.referenceImage || null;
 
         if (!prompt) {
             throw new Error('この画像のプロンプト情報が見つかりません。');
@@ -2011,7 +2031,7 @@
             }
 
             const newUrl = `data:${imagePart.mimeType};base64,${imagePart.data}`;
-            setImageMeta(newUrl, { prompt, ratio, modelKey });
+            setImageMeta(newUrl, { prompt, ratio, modelKey, referenceImage });
 
             const displayRatio = `${ratio} / 4K`;
             if (placeholderId) {
@@ -2020,7 +2040,7 @@
                 addAIResult(newUrl, model.name, displayRatio);
             }
 
-            await saveImageHistory(prompt, newUrl);
+            await saveImageHistory(prompt, newUrl, referenceImage);
             showFeedback('4K画像を生成しました');
 
             if (reopenModal) {
@@ -2131,10 +2151,13 @@
     function openModal(src, prompt = '') {
         const promptContainer = document.getElementById('modal-prompt-container');
         const promptElement = document.getElementById('modal-prompt');
+        const referenceContainer = document.getElementById('modal-reference-container');
+        const referenceImage = document.getElementById('modal-reference-image');
         document.getElementById('modal-image').src = src;
         document.getElementById('modal-download').href = src;
         const meta = imageMeta.get(src);
         const promptText = prompt || meta?.prompt || '';
+        const referenceSrc = meta?.referenceImage || '';
 
         if (promptContainer && promptElement) {
             if (promptText) {
@@ -2143,6 +2166,16 @@
             } else {
                 promptElement.textContent = '';
                 promptContainer.classList.add('hidden');
+            }
+        }
+
+        if (referenceContainer && referenceImage) {
+            if (referenceSrc) {
+                referenceImage.src = referenceSrc;
+                referenceContainer.classList.remove('hidden');
+            } else {
+                referenceImage.src = '';
+                referenceContainer.classList.add('hidden');
             }
         }
 
