@@ -385,8 +385,18 @@
                             <h3 class="text-lg font-display font-bold text-white">最近の画像</h3>
                         </div>
                     </div>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+                        <div class="text-sm text-[#ab9db9]">プロンプトで履歴を絞り込めます。</div>
+                        <div class="flex items-center gap-2 w-full sm:w-auto">
+                            <input id="history-search-input" type="text" placeholder="プロンプトを検索..." class="flex-1 sm:w-64 bg-input-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none placeholder-gray-500" />
+                            <button id="history-search-btn" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary-dark transition-colors border border-primary/50">検索</button>
+                        </div>
+                    </div>
                     <div id="history-empty" class="text-sm text-[#ab9db9] bg-black/30 border border-border-dark rounded-xl p-4 text-center">生成履歴はまだありません。画像を生成するとここに保存されます。</div>
                     <div id="history-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+                    <div class="flex justify-center mt-4">
+                        <button id="history-load-more" class="hidden px-5 py-2 text-sm font-bold rounded-lg border border-border-dark bg-black/30 hover:bg-white/5 transition-colors">もっと見る</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -556,35 +566,13 @@
     let selectedTemplateId = null;
     let pendingDeleteTemplateId = null;
     let imageHistory = [];
+    let currentSearchQuery = "";
+    let historyLoadedCount = 0;
+    let historyHasMore = false;
+    let historyLoading = false;
+    const HISTORY_PAGE_SIZE = 20;
     const imageMeta = new Map();
     let styleReferenceImage = null;
-
-    // --- Local Cache Helpers ---
-    function getHistoryCacheKey(userId) {
-        return userId ? `nb_history_${userId}` : '';
-    }
-
-    function loadHistoryFromCache(userId) {
-        const cacheKey = getHistoryCacheKey(userId);
-        if (!cacheKey) return [];
-        try {
-            const raw = localStorage.getItem(cacheKey);
-            return raw ? JSON.parse(raw) : [];
-        } catch (error) {
-            console.warn('履歴キャッシュの読み込みに失敗しました', error);
-            return [];
-        }
-    }
-
-    function saveHistoryToCache(userId, history = []) {
-        const cacheKey = getHistoryCacheKey(userId);
-        if (!cacheKey) return;
-        try {
-            localStorage.setItem(cacheKey, JSON.stringify(history));
-        } catch (error) {
-            console.warn('履歴キャッシュの保存に失敗しました', error);
-        }
-    }
 
     // --- Settings Helpers ---
     function encryptApiKey(value) {
@@ -830,115 +818,167 @@
     }
 
     // --- Image History Helpers ---
-    function renderHistory() {
+    function resetHistoryState() {
+        historyLoadedCount = 0;
+        historyHasMore = false;
+        historyLoading = false;
+        imageHistory = [];
+        const grid = document.getElementById('history-grid');
+        const empty = document.getElementById('history-empty');
+        const loadMore = document.getElementById('history-load-more');
+        if (grid) grid.innerHTML = '';
+        if (empty) empty.classList.remove('hidden');
+        if (loadMore) loadMore.classList.add('hidden');
+    }
+
+    function createHistoryCard(entry) {
+        const card = document.createElement('div');
+        card.className = "bg-surface-dark border border-border-dark rounded-xl overflow-hidden shadow-lg shadow-black/30 hover:-translate-y-0.5 transition-transform duration-150";
+
+        const imgWrap = document.createElement('div');
+        imgWrap.className = "relative bg-black/40 cursor-pointer";
+
+        const img = document.createElement('img');
+        img.src = entry.image_url;
+        img.className = "w-full h-48 object-cover";
+
+        img.onload = () => {
+            setImageMeta(entry.image_url, { prompt: entry.prompt, ratio: simplifyRatio(img.naturalWidth, img.naturalHeight), modelKey: 'gemini-3-pro-image-preview', referenceImage: entry.reference_image || null });
+        };
+
+        imgWrap.addEventListener('click', () => openModal(entry.image_url, entry.prompt, entry.reference_image || null));
+
+        const expired = document.createElement('div');
+        expired.className = "absolute inset-0 flex items-center justify-center text-[#ab9db9] text-sm bg-black/70 hidden";
+        expired.innerText = "期限切れ";
+
+        img.onerror = () => {
+            img.classList.add('hidden');
+            expired.classList.remove('hidden');
+        };
+
+        imgWrap.appendChild(img);
+        imgWrap.appendChild(expired);
+
+        const body = document.createElement('div');
+        body.className = "p-4 space-y-2";
+
+        const prompt = document.createElement('p');
+        prompt.className = "text-sm text-white leading-relaxed max-h-[48px] overflow-hidden";
+        prompt.textContent = entry.prompt || "";
+
+        const meta = document.createElement('div');
+        meta.className = "flex items-center justify-between text-[11px] text-[#ab9db9]";
+        const date = new Date(entry.created_at || Date.now());
+
+        const metaContent = document.createElement('span');
+        metaContent.className = "flex items-center gap-1";
+        const metaIcon = document.createElement('span');
+        metaIcon.className = "material-symbols-outlined text-[14px]";
+        metaIcon.textContent = 'history';
+        const metaText = document.createElement('span');
+        metaText.textContent = date.toLocaleString('ja-JP');
+
+        metaContent.appendChild(metaIcon);
+        metaContent.appendChild(metaText);
+        meta.appendChild(metaContent);
+
+        body.appendChild(prompt);
+        body.appendChild(meta);
+
+        card.appendChild(imgWrap);
+        card.appendChild(body);
+
+        return card;
+    }
+
+    function renderHistoryEntries(entries = [], { reset = false } = {}) {
         const section = document.getElementById('history-section');
         const grid = document.getElementById('history-grid');
         const empty = document.getElementById('history-empty');
-        if (!section || !grid || !empty) return;
+        const loadMore = document.getElementById('history-load-more');
+        if (!section || !grid || !empty || !loadMore) return;
 
         if (!currentUserId) {
             section.classList.add('hidden');
-            imageHistory = [];
-            grid.innerHTML = '';
-            empty.classList.remove('hidden');
+            resetHistoryState();
             return;
         }
 
         section.classList.remove('hidden');
-        grid.innerHTML = '';
 
-        if (!imageHistory || imageHistory.length === 0) {
-            empty.classList.remove('hidden');
-            return;
+        if (reset) {
+            grid.innerHTML = '';
         }
 
-        empty.classList.add('hidden');
-
-        imageHistory.forEach(entry => {
-            const card = document.createElement('div');
-            card.className = "bg-surface-dark border border-border-dark rounded-xl overflow-hidden shadow-lg shadow-black/30 hover:-translate-y-0.5 transition-transform duration-150";
-
-            const imgWrap = document.createElement('div');
-            imgWrap.className = "relative bg-black/40 cursor-pointer";
-
-            const img = document.createElement('img');
-            img.src = entry.image_url;
-            img.className = "w-full h-48 object-cover";
-
-            img.onload = () => {
-                setImageMeta(entry.image_url, { prompt: entry.prompt, ratio: simplifyRatio(img.naturalWidth, img.naturalHeight), modelKey: 'gemini-3-pro-image-preview', referenceImage: entry.reference_image || null });
-            };
-
-            imgWrap.addEventListener('click', () => openModal(entry.image_url, entry.prompt, entry.reference_image || null));
-
-            const expired = document.createElement('div');
-            expired.className = "absolute inset-0 flex items-center justify-center text-[#ab9db9] text-sm bg-black/70 hidden";
-            expired.innerText = "期限切れ";
-
-            img.onerror = () => {
-                img.classList.add('hidden');
-                expired.classList.remove('hidden');
-            };
-
-            imgWrap.appendChild(img);
-            imgWrap.appendChild(expired);
-
-            const body = document.createElement('div');
-            body.className = "p-4 space-y-2";
-
-            const prompt = document.createElement('p');
-            prompt.className = "text-sm text-white leading-relaxed max-h-[48px] overflow-hidden";
-            prompt.textContent = entry.prompt || "";
-
-            const meta = document.createElement('div');
-            meta.className = "flex items-center justify-between text-[11px] text-[#ab9db9]";
-            const date = new Date(entry.created_at || Date.now());
-
-            const metaContent = document.createElement('span');
-            metaContent.className = "flex items-center gap-1";
-            const metaIcon = document.createElement('span');
-            metaIcon.className = "material-symbols-outlined text-[14px]";
-            metaIcon.textContent = 'history';
-            const metaText = document.createElement('span');
-            metaText.textContent = date.toLocaleString('ja-JP');
-
-            metaContent.appendChild(metaIcon);
-            metaContent.appendChild(metaText);
-            meta.appendChild(metaContent);
-
-            body.appendChild(prompt);
-            body.appendChild(meta);
-
-            card.appendChild(imgWrap);
-            card.appendChild(body);
-
-            grid.appendChild(card);
+        entries.forEach(entry => {
+            grid.appendChild(createHistoryCard(entry));
         });
+
+        const hasEntries = grid.children.length > 0;
+        empty.classList.toggle('hidden', hasEntries);
+        loadMore.classList.toggle('hidden', !historyHasMore);
     }
 
-    async function loadImageHistory(userId) {
-        if (!userId) return;
+    async function loadHistory() {
+        if (!currentUserId || historyLoading) return;
 
-        // 1) 即時描画用にローカルキャッシュを読み込む
-        imageHistory = loadHistoryFromCache(userId);
-        renderHistory();
+        const loadMore = document.getElementById('history-load-more');
+        historyLoading = true;
+        if (loadMore) {
+            loadMore.disabled = true;
+            loadMore.textContent = '読み込み中...';
+        }
 
-        // 2) サーバーから最新を取得
-        const { data, error } = await supabaseClient
+        let query = supabaseClient
             .from('image_history')
             .select('id, prompt, image_url, reference_image, created_at')
-            .eq('user_id', userId)
+            .eq('user_id', currentUserId);
+
+        const keyword = currentSearchQuery?.trim();
+        if (keyword) {
+            query = query.ilike('prompt', `%${keyword}%`);
+        }
+
+        const start = historyLoadedCount;
+        const end = historyLoadedCount + HISTORY_PAGE_SIZE - 1;
+        const { data, error } = await query
             .order('created_at', { ascending: false })
-            .limit(500);
+            .range(start, end);
+
+        historyLoading = false;
+        if (loadMore) {
+            loadMore.disabled = false;
+            loadMore.textContent = 'もっと見る';
+        }
 
         if (error) {
             console.warn('履歴の取得に失敗しました', error);
             return;
         }
 
-        imageHistory = data || [];
-        saveHistoryToCache(userId, imageHistory);
-        renderHistory();
+        const results = data || [];
+        const isFirstPage = historyLoadedCount === 0;
+        imageHistory.push(...results);
+        historyLoadedCount += results.length;
+        historyHasMore = results.length === HISTORY_PAGE_SIZE;
+
+        renderHistoryEntries(results, { reset: isFirstPage });
+
+        if (isFirstPage && results.length === 0) {
+            renderHistoryEntries([], { reset: true });
+        }
+    }
+
+    async function refreshHistoryFromStart() {
+        resetHistoryState();
+        await loadHistory();
+    }
+
+    async function handleHistorySearch() {
+        const input = document.getElementById('history-search-input');
+        currentSearchQuery = input?.value.trim() || '';
+        await refreshHistoryFromStart();
     }
 
     async function saveImageHistory(prompt, imageUrl, referenceImageBase64 = null) {
@@ -963,9 +1003,7 @@
         }
 
         if (data) {
-            imageHistory.unshift(data);
-            saveHistoryToCache(currentUserId, imageHistory);
-            renderHistory();
+            await refreshHistoryFromStart();
         }
     }
 
@@ -1090,7 +1128,10 @@
         currentUserId = null;
         currentApiKeyRecordId = null;
         clearInMemoryData();
-        renderHistory();
+        currentSearchQuery = "";
+        const searchInput = document.getElementById('history-search-input');
+        if (searchInput) searchInput.value = '';
+        renderHistoryEntries([], { reset: true });
     }
 
     async function showAppShell(user) {
@@ -1105,11 +1146,15 @@
         document.getElementById('logout-button').classList.remove('hidden');
         document.getElementById('settings-fab').classList.remove('hidden');
         currentUserId = user?.id || null;
+        currentSearchQuery = "";
+        resetHistoryState();
+        const searchInput = document.getElementById('history-search-input');
+        if (searchInput) searchInput.value = '';
         await Promise.all([
             loadTemplates(currentUserId),
             loadApiKeyFromDB(currentUserId),
-            loadImageHistory(currentUserId),
         ]);
+        await loadHistory();
     }
 
     async function handleAuthSubmit(event) {
@@ -1205,6 +1250,21 @@
                 handleGenerate();
             });
         }
+
+        const historySearchBtn = document.getElementById('history-search-btn');
+        const historySearchInput = document.getElementById('history-search-input');
+        if (historySearchBtn) historySearchBtn.addEventListener('click', handleHistorySearch);
+        if (historySearchInput) {
+            historySearchInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleHistorySearch();
+                }
+            });
+        }
+
+        const historyLoadMore = document.getElementById('history-load-more');
+        if (historyLoadMore) historyLoadMore.addEventListener('click', () => loadHistory());
     });
 
     function initModelSelect() {
@@ -1306,6 +1366,9 @@
         if (!currentUserId) {
             showFeedback('ログイン後に履歴を確認できます', true);
             return;
+        }
+        if (historyLoadedCount === 0 && !historyLoading) {
+            refreshHistoryFromStart();
         }
         switchView('history');
     }
