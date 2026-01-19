@@ -1,6 +1,6 @@
-# Database Schema Documentation (Supabase)
+# Database Schema Documentation
 
-このプロジェクトで使用しているSupabaseのデータベース構造（パブリックテーブル）の定義書です。
+このプロジェクトで使用しているデータベース構造（パブリックテーブル）の定義書です。
 AIにコード修正を依頼する際は、この内容を前提情報として渡してください。
 
 ## 1. テーブル一覧
@@ -9,7 +9,8 @@ AIにコード修正を依頼する際は、この内容を前提情報として
 | :--- | :--- | :--- |
 | **users** | ユーザー管理 | ダミーメール運用によるユーザー名管理 |
 | **templates** | プロンプトテンプレート | ユーザーが保存した定型文 |
-| **image_history** | 生成履歴 | 生成結果のURLと参照画像を保存 |
+| **generations** | 生成履歴 | 生成パラメータと参照画像を保存 |
+| **generated_images** | 生成画像 | 生成結果の画像データを保存 |
 | **api_keys** | APIキー管理 | 外部AIサービスのキー（暗号化必須） |
 
 ---
@@ -36,24 +37,38 @@ AIにコード修正を依頼する際は、この内容を前提情報として
 | `id` | `uuid` | **PK**, `default gen_random_uuid()` | |
 | `user_id` | `uuid` | `not null`, `references users(id)` | 所有者 |
 | `title` | `text` | | テンプレート名 |
-| `content` | `text` | | プロンプト本文 |
+| `content` | `text` | | プロンプト本文・変数定義(JSON) |
 | `created_at` | `timestamptz`| `default now()` | 作成日時 |
 
 ---
 
-### `image_history`
-画像生成の履歴ログ。生成された画像のURLと、**生成に使用した参照画像（スタイル画）**を保存する。
+### `generations`
+画像生成リクエストの履歴。生成に使用したパラメータと参照画像を保存する。
 
 | カラム名 | データ型 | 制約 / デフォルト | 説明 |
 | :--- | :--- | :--- | :--- |
-| `id` | `uuid` | **PK**, `default gen_random_uuid()` | |
-| `user_id` | `uuid` | `not null`, `references users(id)` | 所有者 |
-| `prompt` | `text` | | 生成に使用したプロンプト |
-| `image_url` | `text` | `not null` | 生成された画像のURL (期限付き) |
-| `reference_image`| `text` | **(重要)**, `nullable` | スタイル参照元の画像データ (Base64) |
-| `created_at` | `timestamptz`| `default now()` | 生成日時 |
+| `id` | `bigint` | **PK**, `auto_increment` | |
+| `prompt` | `text` | `not null` | 生成に使用したプロンプト |
+| `aspect_ratio` | `varchar(10)` | `not null` | 生成比率 |
+| `resolution` | `varchar(10)` | `not null` | 生成解像度 |
+| `temperature` | `decimal(3,2)` | `not null` | 生成温度 |
+| `image_count` | `int` | `not null` | 生成枚数 |
+| `reference_image_base64` | `longtext` | `nullable` | 参照画像のBase64 |
+| `reference_image_mime` | `varchar(50)` | `nullable` | 参照画像のMIME |
+| `created_at` | `timestamp` | `default CURRENT_TIMESTAMP` | 作成日時 |
 
-> **注意:** `reference_image` はBase64テキストデータのため容量が大きいです。不要な場合はNULLを許容しています。
+---
+
+### `generated_images`
+生成された画像データを保存するテーブル。
+
+| カラム名 | データ型 | 制約 / デフォルト | 説明 |
+| :--- | :--- | :--- | :--- |
+| `id` | `bigint` | **PK**, `auto_increment` | |
+| `generation_id` | `bigint` | `not null`, `references generations(id)` | 生成履歴との紐付け |
+| `image_base64` | `longtext` | `not null` | 生成画像のBase64 |
+| `mime_type` | `varchar(50)` | `not null` | MIMEタイプ |
+| `created_at` | `timestamp` | `default CURRENT_TIMESTAMP` | 作成日時 |
 
 ---
 
@@ -78,4 +93,4 @@ GeminiなどのAPIキーを保存するテーブル。**セキュリティのた
     * `api_keys.key` に保存する際は、必ずクライアントサイドで `CryptoJS` 等を用いて暗号化すること。
     * `key` カラムの値をそのままAPIリクエストに使用しないこと（復号プロセスを経ること）。
 3.  **参照画像の保存:**
-    * `image_history` に保存する際、`image_url` は生成結果（Googleサーバー）、`reference_image` は入力画像（ローカルアップロード）であることを混同しないこと。
+    * `generations.reference_image_base64` に保存する際、Base64本文のみを保存し、`data:` プレフィックスは含めないこと。
