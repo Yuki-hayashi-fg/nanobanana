@@ -1,0 +1,275 @@
+name: Gemini画像生成サービス
+description: Gemini 3 Pro Image Previewを使用した画像生成履歴管理バックエンドサービス
+
+api:
+  - name: createGeneration
+    description: 画像生成リクエストを履歴として保存する
+    endpoint: POST /generations
+    input:
+      prompt: string
+      aspectRatio: string
+      resolution: string
+      temperature: number
+      imageCount: integer
+      referenceImageBase64: string
+      referenceImageMime: string
+    steps:
+      - check:
+          condition: 'input.prompt != null'
+          errorCode: prompt_required
+          errorMessage: プロンプトは必須です
+      - check:
+          condition: 'input.aspectRatio != null'
+          errorCode: aspect_ratio_required
+          errorMessage: アスペクト比は必須です
+      - check:
+          condition: 'input.resolution != null'
+          errorCode: resolution_required
+          errorMessage: 解像度は必須です
+      - save:
+          table: generations
+          data:
+            prompt: input.prompt
+            aspect_ratio: input.aspectRatio
+            resolution: input.resolution
+            temperature: input.temperature
+            image_count: input.imageCount
+            reference_image_base64: input.referenceImageBase64
+            reference_image_mime: input.referenceImageMime
+      - fetchOne:
+          table: generations
+          orderBy: 'id DESC'
+          limit: 1
+        as: created_generation
+    output:
+      id: fetched.created_generation.id
+      prompt: fetched.created_generation.prompt
+      aspectRatio: fetched.created_generation.aspect_ratio
+      resolution: fetched.created_generation.resolution
+      temperature: fetched.created_generation.temperature
+      imageCount: fetched.created_generation.image_count
+      createdAt: fetched.created_generation.created_at
+
+  - name: saveGeneratedImage
+    description: 生成された画像を保存する
+    endpoint: POST /generations/{generation_id}/images
+    input:
+      imageBase64: string
+      mimeType: string
+    steps:
+      - check:
+          condition: 'input.imageBase64 != null'
+          errorCode: image_required
+          errorMessage: 画像データは必須です
+      - check:
+          condition: 'input.mimeType != null'
+          errorCode: mime_type_required
+          errorMessage: MIMEタイプは必須です
+      - save:
+          table: generated_images
+          data:
+            generation_id: path.generation_id
+            image_base64: input.imageBase64
+            mime_type: input.mimeType
+      - fetchOne:
+          table: generated_images
+          orderBy: 'id DESC'
+          limit: 1
+        as: saved_image
+    output:
+      id: fetched.saved_image.id
+      generationId: fetched.saved_image.generation_id
+      mimeType: fetched.saved_image.mime_type
+      createdAt: fetched.saved_image.created_at
+
+  - name: listGenerations
+    description: 生成履歴一覧を取得する（ページネーション対応、50件ずつ）
+    endpoint: GET /generations
+    input:
+      page: integer
+    steps:
+      - calculate:
+          offset: '(input.page - 1) * 50'
+        as: pagination
+      - fetchMany:
+          table: generations
+          orderBy: 'created_at DESC'
+          limit: 50
+          offset: calculated.pagination.offset
+        as: list
+      - fetchOne:
+          table: generations
+          select: 'COUNT(*) as total'
+        as: count
+    output:
+      generations: fetched.list
+      total: fetched.count.total
+      page: input.page
+      perPage: 50
+
+  - name: getGeneration
+    description: 生成履歴の詳細を取得する
+    endpoint: GET /generations/{id}
+    steps:
+      - fetchOne:
+          table: generations
+          where:
+            id: path.id
+        as: generation
+      - check:
+          condition: 'fetched.generation != null'
+          errorCode: not_found
+          errorMessage: 指定された生成履歴が見つかりません
+      - fetchMany:
+          table: generated_images
+          where:
+            generation_id: path.id
+          orderBy: 'id ASC'
+        as: images
+    output:
+      id: fetched.generation.id
+      prompt: fetched.generation.prompt
+      aspectRatio: fetched.generation.aspect_ratio
+      resolution: fetched.generation.resolution
+      temperature: fetched.generation.temperature
+      imageCount: fetched.generation.image_count
+      referenceImageBase64: fetched.generation.reference_image_base64
+      referenceImageMime: fetched.generation.reference_image_mime
+      createdAt: fetched.generation.created_at
+      images: fetched.images
+
+  - name: getGeneratedImages
+    description: 指定した生成履歴の画像一覧を取得する
+    endpoint: GET /generations/{generation_id}/images
+    steps:
+      - fetchMany:
+          table: generated_images
+          where:
+            generation_id: path.generation_id
+          orderBy: 'id ASC'
+        as: images
+    output:
+      images: fetched.images
+
+  - name: getRecentGenerations
+    description: 最新の生成履歴を取得する（チャットスペース用）
+    endpoint: GET /generations/recent
+    input:
+      limit: integer
+    steps:
+      - fetchMany:
+          table: generations
+          orderBy: 'created_at DESC'
+          limit: input.limit
+        as: list
+    output:
+      generations: fetched.list
+
+  - name: createPromptTemplate
+    description: プロンプトテンプレートを作成する
+    endpoint: POST /templates
+    input:
+      title: string
+      content: string
+    steps:
+      - check:
+          condition: 'input.title != null'
+          errorCode: title_required
+          errorMessage: テンプレート名は必須です
+      - check:
+          condition: 'input.content != null'
+          errorCode: content_required
+          errorMessage: テンプレート本文は必須です
+      - save:
+          table: prompt_templates
+          data:
+            title: input.title
+            content: input.content
+      - fetchOne:
+          table: prompt_templates
+          orderBy: 'id DESC'
+          limit: 1
+        as: created_template
+    output:
+      id: fetched.created_template.id
+      title: fetched.created_template.title
+      content: fetched.created_template.content
+      createdAt: fetched.created_template.created_at
+      updatedAt: fetched.created_template.updated_at
+
+  - name: listPromptTemplates
+    description: プロンプトテンプレート一覧を取得する
+    endpoint: GET /templates
+    steps:
+      - fetchMany:
+          table: prompt_templates
+          orderBy: 'created_at DESC'
+        as: list
+    output:
+      templates: fetched.list
+
+  - name: getPromptTemplate
+    description: 指定したテンプレートを取得する
+    endpoint: GET /templates/{id}
+    steps:
+      - fetchOne:
+          table: prompt_templates
+          where:
+            id: path.id
+        as: template
+      - check:
+          condition: 'fetched.template != null'
+          errorCode: not_found
+          errorMessage: 指定されたテンプレートが見つかりません
+    output:
+      id: fetched.template.id
+      title: fetched.template.title
+      content: fetched.template.content
+      createdAt: fetched.template.created_at
+      updatedAt: fetched.template.updated_at
+
+  - name: updatePromptTemplate
+    description: 指定したテンプレートを更新する
+    endpoint: PATCH /templates/{id}
+    input:
+      title: string
+      content: string
+    steps:
+      - fetchOne:
+          table: prompt_templates
+          where:
+            id: path.id
+        as: template
+      - check:
+          condition: 'fetched.template != null'
+          errorCode: not_found
+          errorMessage: 指定されたテンプレートが見つかりません
+      - save:
+          table: prompt_templates
+          data:
+            title: input.title
+            content: input.content
+          where:
+            id: path.id
+      - fetchOne:
+          table: prompt_templates
+          where:
+            id: path.id
+        as: updated_template
+    output:
+      id: fetched.updated_template.id
+      title: fetched.updated_template.title
+      content: fetched.updated_template.content
+      createdAt: fetched.updated_template.created_at
+      updatedAt: fetched.updated_template.updated_at
+
+  - name: deletePromptTemplate
+    description: 指定したテンプレートを削除する
+    endpoint: DELETE /templates/{id}
+    steps:
+      - delete:
+          table: prompt_templates
+          where:
+            id: path.id
+    output:
+      deleted: true

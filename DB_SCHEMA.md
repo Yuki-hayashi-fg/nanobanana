@@ -1,81 +1,94 @@
-# Database Schema Documentation (Supabase)
+# Database Schema Documentation
 
-このプロジェクトで使用しているSupabaseのデータベース構造（パブリックテーブル）の定義書です。
-AIにコード修正を依頼する際は、この内容を前提情報として渡してください。
+このドキュメントは、Gemini画像生成サービスで使用するデータベース定義をまとめたものです。
+プロンプトテンプレート機能を追加したため、テンプレート用テーブルも含めています。
+
+---
 
 ## 1. テーブル一覧
 
 | テーブル名 | 用途 | 備考 |
 | :--- | :--- | :--- |
-| **users** | ユーザー管理 | ダミーメール運用によるユーザー名管理 |
-| **templates** | プロンプトテンプレート | ユーザーが保存した定型文 |
-| **image_history** | 生成履歴 | 生成結果のURLと参照画像を保存 |
-| **api_keys** | APIキー管理 | 外部AIサービスのキー（暗号化必須） |
+| **generations** | 画像生成リクエスト | 生成パラメータと参照画像の保存 |
+| **generated_images** | 生成画像 | generationsと紐付く生成結果 |
+| **prompt_templates** | プロンプトテンプレート | 定型プロンプトの保存 |
 
 ---
 
-## 2. 詳細定義
+## 2. DDL
 
-### `users`
-ユーザー名とパスワードによる独自ログイン（裏側でダミーメール認証）を管理するためのテーブル。
+```sql
+CREATE TABLE generations (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    aspect_ratio VARCHAR(10) NOT NULL,
+    resolution VARCHAR(10) NOT NULL,
+    temperature DECIMAL(3,2) NOT NULL,
+    image_count INT NOT NULL,
+    reference_image_base64 LONGTEXT,
+    reference_image_mime VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE generated_images (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    generation_id BIGINT UNSIGNED NOT NULL,
+    image_base64 LONGTEXT NOT NULL,
+    mime_type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (generation_id) REFERENCES generations(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE prompt_templates (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+```
+
+---
+
+## 3. テーブル詳細
+
+### `generations`
+画像生成リクエストの履歴を保存するテーブルです。
 
 | カラム名 | データ型 | 制約 / デフォルト | 説明 |
 | :--- | :--- | :--- | :--- |
-| `id` | `uuid` | **PK**, `references auth.users(id)` | Supabase AuthのUIDと紐付け |
-| `username` | `text` | `unique`, `not null` | ログイン用ユーザー名 |
-| `password_hash`| `text` | `not null` | (アプリの実装依存) |
-| `created_at` | `timestamptz`| `default now()` | 作成日時 |
+| `id` | `BIGINT UNSIGNED` | **PK**, auto increment | 生成リクエストID |
+| `prompt` | `TEXT` | `not null` | 生成プロンプト |
+| `aspect_ratio` | `VARCHAR(10)` | `not null` | アスペクト比 |
+| `resolution` | `VARCHAR(10)` | `not null` | 解像度 |
+| `temperature` | `DECIMAL(3,2)` | `not null` | 温度パラメータ |
+| `image_count` | `INT` | `not null` | 生成枚数 |
+| `reference_image_base64` | `LONGTEXT` | `nullable` | 参照画像（Base64） |
+| `reference_image_mime` | `VARCHAR(50)` | `nullable` | 参照画像MIMEタイプ |
+| `created_at` | `TIMESTAMP` | `default CURRENT_TIMESTAMP` | 作成日時 |
 
 ---
 
-### `templates`
-ユーザーが作成したプロンプトのテンプレートを保存するテーブル。
+### `generated_images`
+生成された画像データを保存するテーブルです。
 
 | カラム名 | データ型 | 制約 / デフォルト | 説明 |
 | :--- | :--- | :--- | :--- |
-| `id` | `uuid` | **PK**, `default gen_random_uuid()` | |
-| `user_id` | `uuid` | `not null`, `references users(id)` | 所有者 |
-| `title` | `text` | | テンプレート名 |
-| `content` | `text` | | プロンプト本文 |
-| `created_at` | `timestamptz`| `default now()` | 作成日時 |
+| `id` | `BIGINT UNSIGNED` | **PK**, auto increment | 生成画像ID |
+| `generation_id` | `BIGINT UNSIGNED` | `not null` | generationsへの外部キー |
+| `image_base64` | `LONGTEXT` | `not null` | 画像データ（Base64） |
+| `mime_type` | `VARCHAR(50)` | `not null` | MIMEタイプ |
+| `created_at` | `TIMESTAMP` | `default CURRENT_TIMESTAMP` | 作成日時 |
 
 ---
 
-### `image_history`
-画像生成の履歴ログ。生成された画像のURLと、**生成に使用した参照画像（スタイル画）**を保存する。
+### `prompt_templates`
+プロンプトテンプレートを保存するテーブルです。
 
 | カラム名 | データ型 | 制約 / デフォルト | 説明 |
 | :--- | :--- | :--- | :--- |
-| `id` | `uuid` | **PK**, `default gen_random_uuid()` | |
-| `user_id` | `uuid` | `not null`, `references users(id)` | 所有者 |
-| `prompt` | `text` | | 生成に使用したプロンプト |
-| `image_url` | `text` | `not null` | 生成された画像のURL (期限付き) |
-| `reference_image`| `text` | **(重要)**, `nullable` | スタイル参照元の画像データ (Base64) |
-| `created_at` | `timestamptz`| `default now()` | 生成日時 |
-
-> **注意:** `reference_image` はBase64テキストデータのため容量が大きいです。不要な場合はNULLを許容しています。
-
----
-
-### `api_keys`
-GeminiなどのAPIキーを保存するテーブル。**セキュリティのため、生のキーではなく暗号化された文字列を保存する。**
-
-| カラム名 | データ型 | 制約 / デフォルト | 説明 |
-| :--- | :--- | :--- | :--- |
-| `id` | `uuid` | **PK**, `default gen_random_uuid()` | |
-| `user_id` | `uuid` | `not null`, `references users(id)` | 所有者 |
-| `name` | `text` | | キーの名称（例: "Gemini Pro"） |
-| `key` | `text` | `not null` | **暗号化済み**のAPIキー文字列 |
-| `created_at` | `timestamptz`| `default now()` | 作成日時 |
-
----
-
-## 3. 実装上の注意点 (AIへの指示用)
-
-1.  **RLS (Row Level Security):**
-    * 基本的に `user_id = auth.uid()` のデータのみ読み書きできるようにポリシーを設定すること。
-2.  **APIキーの扱い:**
-    * `api_keys.key` に保存する際は、必ずクライアントサイドで `CryptoJS` 等を用いて暗号化すること。
-    * `key` カラムの値をそのままAPIリクエストに使用しないこと（復号プロセスを経ること）。
-3.  **参照画像の保存:**
-    * `image_history` に保存する際、`image_url` は生成結果（Googleサーバー）、`reference_image` は入力画像（ローカルアップロード）であることを混同しないこと。
+| `id` | `BIGINT UNSIGNED` | **PK**, auto increment | テンプレートID |
+| `title` | `VARCHAR(200)` | `not null` | テンプレート名 |
+| `content` | `TEXT` | `not null` | テンプレート本文 |
+| `created_at` | `TIMESTAMP` | `default CURRENT_TIMESTAMP` | 作成日時 |
+| `updated_at` | `TIMESTAMP` | `default CURRENT_TIMESTAMP` | 更新日時 |

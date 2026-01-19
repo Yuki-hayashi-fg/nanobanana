@@ -22,12 +22,11 @@
 
 ## 🛠 実装の前提情報
 
-### 1. データベース構成 (Supabase)
+### 1. データベース構成
 以下のテーブル構成を前提にコードを書いてください。
-* **users**: (id, username, password_hash) ※メールアドレスはダミー(`@my-app-dummy.com`)を使用
-* **templates**: (id, user_id, title, content, created_at)
-* **image_history**: (id, user_id, prompt, image_url, created_at) ※画像はURL保存
-* **api_keys**: (id, user_id, name, key) ※キーはCryptoJSで暗号化して保存
+* **generations**: 生成リクエスト本体
+* **generated_images**: 生成画像（generationsと紐付け）
+* **prompt_templates**: プロンプトテンプレート
 
 ### 2. 技術スタック
 * HTML / Tailwind CSS (CDN)
