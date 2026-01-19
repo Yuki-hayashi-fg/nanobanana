@@ -238,18 +238,19 @@
                             <div>
                                 <label class="text-[10px] font-bold text-[#ab9db9] uppercase mb-1 block">比率</label>
                                 <div class="relative z-10">
-                                    <select id="gen-aspect-ratio" class="w-full bg-[#150d1c] border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none appearance-none cursor-pointer transition-colors hover:border-primary/50">
-                                        <option value="1:1">1:1</option>
-                                        <option value="9:16">9:16</option>
-                                        <option value="16:9">16:9</option>
-                                        <option value="3:4">3:4</option>
-                                        <option value="4:3">4:3</option>
-                                        <option value="3:2">3:2</option>
-                                        <option value="2:3">2:3</option>
-                                        <option value="5:4">5:4</option>
-                                        <option value="4:5">4:5</option>
-                                        <option value="21:9">21:9</option>
-                                    </select>
+                                    <input id="gen-aspect-ratio" list="aspect-ratio-options" inputmode="text" placeholder="例: 7:5" class="w-full bg-[#150d1c] border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-colors hover:border-primary/50" value="1:1" />
+                                    <datalist id="aspect-ratio-options">
+                                        <option value="1:1"></option>
+                                        <option value="9:16"></option>
+                                        <option value="16:9"></option>
+                                        <option value="3:4"></option>
+                                        <option value="4:3"></option>
+                                        <option value="3:2"></option>
+                                        <option value="2:3"></option>
+                                        <option value="5:4"></option>
+                                        <option value="4:5"></option>
+                                        <option value="21:9"></option>
+                                    </datalist>
                                     <span class="material-symbols-outlined absolute right-2 top-2 text-[#ab9db9] pointer-events-none text-sm z-0">unfold_more</span>
                                 </div>
                             </div>
@@ -362,18 +363,7 @@
                             <span class="material-symbols-outlined text-lg">aspect_ratio</span> デフォルト比率
                         </label>
                         <div class="relative">
-                            <select id="editor-aspect-ratio" class="w-full bg-[#150d1c] border border-border-dark rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-white font-medium appearance-none cursor-pointer">
-                                <option value="1:1">1:1</option>
-                                <option value="9:16">9:16</option>
-                                <option value="16:9">16:9</option>
-                                <option value="3:4">3:4</option>
-                                <option value="4:3">4:3</option>
-                                <option value="3:2">3:2</option>
-                                <option value="2:3">2:3</option>
-                                <option value="5:4">5:4</option>
-                                <option value="4:5">4:5</option>
-                                <option value="21:9">21:9</option>
-                            </select>
+                            <input id="editor-aspect-ratio" list="aspect-ratio-options" inputmode="text" placeholder="例: 7:5" class="w-full bg-[#150d1c] border border-border-dark rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-white font-medium" value="1:1" />
                             <span class="material-symbols-outlined absolute right-4 top-4 text-gray-500 pointer-events-none">expand_more</span>
                         </div>
                     </div>
@@ -691,15 +681,37 @@
         return nearest;
     }
 
+    function normalizeRatioNumber(value) {
+        if (!Number.isFinite(value)) return null;
+        if (Number.isInteger(value)) return String(value);
+        const rounded = Number(value.toFixed(4));
+        return String(rounded).replace(/\.0+$/, '').replace(/(\.\d+?)0+$/, '$1');
+    }
+
+    function normalizeRatioPair(raw, fallback = '1:1') {
+        const normalized = String(raw || '').trim().replace('：', ':');
+        if (!normalized) return fallback;
+        if (!normalized.includes(':')) return null;
+        const parts = normalized.split(':').map(part => part.trim());
+        if (parts.length !== 2) return fallback;
+        const w = Number(parts[0]);
+        const h = Number(parts[1]);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
+        const wText = normalizeRatioNumber(w);
+        const hText = normalizeRatioNumber(h);
+        if (!wText || !hText) return fallback;
+        return `${wText}:${hText}`;
+    }
+
     function sanitizeAspectRatio(raw, fallback = '1:1') {
         if (!raw) return fallback;
 
-        const normalized = String(raw).trim();
+        const normalized = String(raw).trim().replace('：', ':');
         if (ALLOWED_ASPECT_RATIOS.includes(normalized)) return normalized;
 
         if (normalized.includes(':')) {
-            const [w, h] = normalized.split(':').map(Number);
-            if (w > 0 && h > 0) return getNearestAllowedAspectRatio(w / h, fallback);
+            const normalizedPair = normalizeRatioPair(normalized, fallback);
+            if (normalizedPair) return normalizedPair;
         }
 
         const numeric = Number(normalized);
