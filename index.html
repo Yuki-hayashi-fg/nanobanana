@@ -184,6 +184,23 @@
                             <textarea id="prompt-input" class="w-full bg-surface-dark border border-border-dark rounded-xl p-4 text-white placeholder-[#5a4f69] focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none h-32 transition-all font-body leading-relaxed" placeholder="どのような画像を生成しますか？..."></textarea>
                             <div class="mt-3 space-y-2">
                                 <div class="flex items-center gap-2 text-xs text-[#ab9db9] font-semibold uppercase">
+                                    <span class="material-symbols-outlined text-sm">bookmark</span>
+                                    <span>テンプレートを挿入</span>
+                                </div>
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <div class="relative flex-1">
+                                        <select id="prompt-template-select" class="w-full bg-input-dark border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none appearance-none cursor-pointer">
+                                            <option value="">テンプレートを選択...</option>
+                                        </select>
+                                        <span class="material-symbols-outlined absolute right-2 top-2.5 text-[#ab9db9] pointer-events-none text-sm">expand_more</span>
+                                    </div>
+                                    <button id="prompt-template-apply" class="px-3 py-2 rounded-lg border border-border-dark bg-black/30 text-xs font-bold text-white hover:bg-white/10 transition-colors whitespace-nowrap">
+                                        挿入する
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="mt-3 space-y-2">
+                                <div class="flex items-center gap-2 text-xs text-[#ab9db9] font-semibold uppercase">
                                     <span class="material-symbols-outlined text-sm">palette</span>
                                     <span>スタイル参照画像 (任意)</span>
                                 </div>
@@ -238,11 +255,31 @@
                             </div>
 
                             <div>
+                                <label class="text-[10px] font-bold text-[#ab9db9] uppercase mb-1 block">解像度</label>
+                                <div class="relative">
+                                    <select id="gen-resolution" class="w-full bg-[#150d1c] border border-border-dark rounded-lg pl-3 pr-8 py-2 text-sm text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none appearance-none cursor-pointer transition-colors hover:border-primary/50">
+                                        <option value="1K">1K</option>
+                                        <option value="2K">2K</option>
+                                        <option value="4K">4K</option>
+                                    </select>
+                                    <span class="material-symbols-outlined absolute right-2 top-2 text-[#ab9db9] pointer-events-none text-sm">unfold_more</span>
+                                </div>
+                            </div>
+
+                            <div>
                                 <div class="flex justify-between items-center mb-1">
                                     <label class="text-[10px] font-bold text-[#ab9db9] uppercase">生成枚数</label>
                                     <span id="gen-count-display" class="text-xs font-mono bg-white/10 px-1.5 rounded text-white">1</span>
                                 </div>
                                 <input type="range" id="gen-count" min="1" max="4" value="1" class="w-full h-1.5 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary" oninput="document.getElementById('gen-count-display').innerText = this.value">
+                            </div>
+
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="text-[10px] font-bold text-[#ab9db9] uppercase">Temperature</label>
+                                    <span id="gen-temperature-display" class="text-xs font-mono bg-white/10 px-1.5 rounded text-white">0.7</span>
+                                </div>
+                                <input type="range" id="gen-temperature" min="0" max="1" step="0.05" value="0.7" class="w-full h-1.5 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary">
                             </div>
 
                         </div>
@@ -556,6 +593,7 @@
         const [w, h] = ratio.split(':').map(Number);
         return { ratio, value: w / h };
     });
+    const ALLOWED_RESOLUTIONS = ['1K', '2K', '4K'];
 
     // --- State ---
     let templates = [];
@@ -670,6 +708,31 @@
         }
 
         return fallback;
+    }
+
+    function sanitizeResolution(raw, fallback = '1K') {
+        if (!raw) return fallback;
+        const normalized = String(raw).trim().toUpperCase();
+        return ALLOWED_RESOLUTIONS.includes(normalized) ? normalized : fallback;
+    }
+
+    function clampTemperature(value, fallback = 0.7) {
+        const num = Number(value);
+        if (Number.isNaN(num)) return fallback;
+        return Math.min(1, Math.max(0, num));
+    }
+
+    function parseDataUrl(dataUrl) {
+        if (!dataUrl || !dataUrl.startsWith('data:')) return null;
+        const [meta, base64] = dataUrl.split(',');
+        if (!meta || !base64) return null;
+        const match = meta.match(/data:(.*?);base64/i);
+        return { base64, mimeType: match ? match[1] : 'image/png' };
+    }
+
+    function dataUrlFromBase64(base64, mimeType) {
+        if (!base64) return '';
+        return `data:${mimeType || 'image/png'};base64,${base64}`;
     }
 
     function setImageMeta(url, meta) {
@@ -931,20 +994,18 @@
         }
 
         let query = supabaseClient
-            .from('image_history')
-            .select('id, prompt, image_url, reference_image, created_at')
-            .eq('user_id', currentUserId);
+            .from('generated_images')
+            .select('id, image_base64, mime_type, created_at, generations!inner(prompt, reference_image_base64, reference_image_mime, created_at)')
+            .order('created_at', { ascending: false });
 
         const keyword = currentSearchQuery?.trim();
         if (keyword) {
-            query = query.ilike('prompt', `%${keyword}%`);
+            query = query.ilike('generations.prompt', `%${keyword}%`);
         }
 
         const start = historyLoadedCount;
         const end = historyLoadedCount + HISTORY_PAGE_SIZE - 1;
-        const { data, error } = await query
-            .order('created_at', { ascending: false })
-            .range(start, end);
+        const { data, error } = await query.range(start, end);
 
         historyLoading = false;
         if (loadMore) {
@@ -957,7 +1018,13 @@
             return;
         }
 
-        const results = data || [];
+        const results = (data || []).map(row => ({
+            id: row.id,
+            prompt: row.generations?.prompt || '',
+            image_url: dataUrlFromBase64(row.image_base64, row.mime_type),
+            reference_image: dataUrlFromBase64(row.generations?.reference_image_base64, row.generations?.reference_image_mime),
+            created_at: row.generations?.created_at || row.created_at,
+        }));
         const isFirstPage = historyLoadedCount === 0;
         imageHistory.push(...results);
         historyLoadedCount += results.length;
@@ -981,30 +1048,52 @@
         await refreshHistoryFromStart();
     }
 
-    async function saveImageHistory(prompt, imageUrl, referenceImageBase64 = null) {
-        if (!currentUserId || !prompt || !imageUrl) return;
-        const payload = {
-            id: crypto.randomUUID(),
-            user_id: currentUserId,
+    async function saveGenerationHistory({ prompt, aspectRatio, resolution, temperature, imageCount, referenceImage, images }) {
+        if (!currentUserId || !prompt || !images?.length) return;
+
+        const parsedImages = images
+            .map((image) => parseDataUrl(image.url))
+            .filter((parsed) => parsed?.base64);
+
+        if (!parsedImages.length) return;
+
+        const generationPayload = {
             prompt,
-            image_url: imageUrl,
-            reference_image: referenceImageBase64 || null,
+            aspect_ratio: sanitizeAspectRatio(aspectRatio),
+            resolution: sanitizeResolution(resolution),
+            temperature: clampTemperature(temperature),
+            image_count: imageCount,
+            reference_image_base64: referenceImage?.data || null,
+            reference_image_mime: referenceImage?.mimeType || null,
         };
 
-        const { data, error } = await supabaseClient
-            .from('image_history')
-            .insert(payload)
-            .select('id, prompt, image_url, reference_image, created_at')
+        const { data: generation, error: generationError } = await supabaseClient
+            .from('generations')
+            .insert([generationPayload])
+            .select('id')
             .single();
 
-        if (error) {
-            console.warn('履歴の保存に失敗しました', error);
+        if (generationError || !generation) {
+            console.warn('生成履歴の保存に失敗しました', generationError);
             return;
         }
 
-        if (data) {
-            await refreshHistoryFromStart();
+        const imageRows = parsedImages.map(parsed => ({
+            generation_id: generation.id,
+            image_base64: parsed.base64,
+            mime_type: parsed.mimeType || 'image/png',
+        }));
+
+        const { error: imageError } = await supabaseClient
+            .from('generated_images')
+            .insert(imageRows);
+
+        if (imageError) {
+            console.warn('生成画像の保存に失敗しました', imageError);
+            return;
         }
+
+        await refreshHistoryFromStart();
     }
 
     function openSettingsPanel() {
@@ -1265,6 +1354,26 @@
 
         const historyLoadMore = document.getElementById('history-load-more');
         if (historyLoadMore) historyLoadMore.addEventListener('click', () => loadHistory());
+
+        const tempSlider = document.getElementById('gen-temperature');
+        const tempDisplay = document.getElementById('gen-temperature-display');
+        if (tempSlider && tempDisplay) {
+            const updateTemp = () => {
+                const value = clampTemperature(tempSlider.value, 0.7);
+                tempSlider.value = value.toFixed(2);
+                tempDisplay.textContent = Number(value).toFixed(2);
+            };
+            tempSlider.addEventListener('input', updateTemp);
+            updateTemp();
+        }
+
+        const templateApplyBtn = document.getElementById('prompt-template-apply');
+        if (templateApplyBtn) {
+            templateApplyBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                applyTemplateToPrompt();
+            });
+        }
     });
 
     function initModelSelect() {
@@ -1415,6 +1524,46 @@
         });
 
         updateSelectedTemplateBadge();
+        renderTemplateSelectOptions();
+    }
+
+    function renderTemplateSelectOptions() {
+        const select = document.getElementById('prompt-template-select');
+        if (!select) return;
+        select.innerHTML = '';
+
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'テンプレートを選択...';
+        select.appendChild(placeholder);
+
+        templates.forEach(template => {
+            const option = document.createElement('option');
+            option.value = template.id;
+            option.textContent = template.name;
+            select.appendChild(option);
+        });
+    }
+
+    function applyTemplateToPrompt() {
+        const select = document.getElementById('prompt-template-select');
+        const promptInput = document.getElementById('prompt-input');
+        if (!select || !promptInput) return;
+
+        const templateId = select.value;
+        if (!templateId) {
+            showFeedback('挿入するテンプレートを選択してください', true);
+            return;
+        }
+
+        const tmpl = templates.find(t => t.id === templateId);
+        if (!tmpl) return;
+
+        promptInput.value = tmpl.prompt;
+        const arSelect = document.getElementById('gen-aspect-ratio');
+        if (arSelect) arSelect.value = sanitizeAspectRatio(tmpl.aspectRatio);
+        showFeedback(`テンプレート「${tmpl.name}」を挿入しました`);
+        select.value = '';
     }
 
     // --- GENERATOR LOGIC ---
@@ -1546,6 +1695,9 @@
         const aspectRatio = sanitizeAspectRatio(document.getElementById('gen-aspect-ratio').value);
         document.getElementById('gen-aspect-ratio').value = aspectRatio;
         const count = parseInt(document.getElementById('gen-count').value) || 1;
+        const resolution = sanitizeResolution(document.getElementById('gen-resolution').value);
+        document.getElementById('gen-resolution').value = resolution;
+        const temperature = clampTemperature(document.getElementById('gen-temperature').value);
         const snapshotModelKey = activeModelKey;
         const activeModel = MODELS[snapshotModelKey];
         const styleReference = styleReferenceImage ? { ...styleReferenceImage } : null;
@@ -1580,7 +1732,7 @@
         addMessage(finalPrompt, 'user');
         const placeholderId = addGenerationPlaceholder('🤖 生成中...（待機中）');
 
-        const request = { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference };
+        const request = { apiKey, aspectRatio, resolution, temperature, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference };
         enqueueTask({ type: 'generate', request, placeholderId });
 
         const promptInput = document.getElementById('prompt-input');
@@ -1589,7 +1741,7 @@
     }
 
     async function runGenerationTask({ request, placeholderId }) {
-        const { apiKey, aspectRatio, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference } = request;
+        const { apiKey, aspectRatio, resolution, temperature, count, snapshotModelKey, finalPrompt, isDemoMode, styleReference } = request;
         const activeModel = MODELS[snapshotModelKey];
         if (!activeModel) {
             showFeedback("モデルを選択してください", true);
@@ -1620,7 +1772,7 @@
             const imageConfig = { aspect_ratio: aspectRatio };
             const imageSize = is4K
                 ? '4K'
-                : (activeModel.id === 'gemini-3-pro-image-preview' ? '1K' : undefined);
+                : (activeModel.id === 'gemini-3-pro-image-preview' ? resolution : undefined);
             if (imageSize) {
                 imageConfig.image_size = imageSize;
             }
@@ -1628,7 +1780,8 @@
             return {
                 contents: [{ parts }],
                 generationConfig: {
-                    image_config: imageConfig
+                    image_config: imageConfig,
+                    temperature: clampTemperature(temperature)
                 }
             };
         };
@@ -1665,7 +1818,7 @@
                             url = `${activeModel.endpointBase}?key=${apiKey}`;
                             requestBody = {
                                 "instances": [ { "prompt": promptForRequest } ],
-                                "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio }
+                                "parameters": { "sampleCount": 1, "aspectRatio": aspectRatio, "temperature": clampTemperature(temperature) }
                             };
                         }
 
@@ -1728,7 +1881,15 @@
                 setImageMeta(res.url, { prompt: res.prompt, ratio: res.ratio, modelKey: res.modelKey, referenceImage: res.referenceImage || null });
             });
 
-            await Promise.allSettled(validResults.map(res => saveImageHistory(res.prompt, res.url, res.referenceImage || null)));
+            await saveGenerationHistory({
+                prompt: promptForRequest,
+                aspectRatio,
+                resolution,
+                temperature,
+                imageCount: count,
+                referenceImage: styleReference,
+                images: validResults,
+            });
 
             renderResultsInPlaceholder(placeholderId, validResults, activeModel.name);
         } catch (err) {
@@ -2209,7 +2370,17 @@
                 addAIResult(newUrl, model.name, displayRatio);
             }
 
-            await saveImageHistory(prompt, newUrl, meta?.referenceImage || null);
+            const temperature = clampTemperature(document.getElementById('gen-temperature')?.value ?? 0.7);
+            const referenceParsed = parseDataUrl(meta?.referenceImage || '');
+            await saveGenerationHistory({
+                prompt,
+                aspectRatio: ratio,
+                resolution: '4K',
+                temperature,
+                imageCount: 1,
+                referenceImage: referenceParsed ? { data: referenceParsed.base64, mimeType: referenceParsed.mimeType } : null,
+                images: [{ url: newUrl }],
+            });
             showFeedback('4K画像を生成しました');
 
             if (reopenModal) {

@@ -25,8 +25,9 @@
 ### 1. データベース構成 (Supabase)
 以下のテーブル構成を前提にコードを書いてください。
 * **users**: (id, username, password_hash) ※メールアドレスはダミー(`@my-app-dummy.com`)を使用
-* **templates**: (id, user_id, title, content, created_at)
-* **image_history**: (id, user_id, prompt, image_url, created_at) ※画像はURL保存
+* **templates**: (id, user_id, title, content, created_at) ※プロンプトテンプレート保存用
+* **generations**: (id, prompt, aspect_ratio, resolution, temperature, image_count, reference_image_base64, reference_image_mime, created_at)
+* **generated_images**: (id, generation_id, image_base64, mime_type, created_at)
 * **api_keys**: (id, user_id, name, key) ※キーはCryptoJSで暗号化して保存
 
 ### 2. 技術スタック
